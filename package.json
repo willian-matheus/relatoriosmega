@@ -15,10 +15,12 @@
     "format": "prettier --write apps packages samples README.md package.json",
     "start": "concurrently -k -n WEB,API -c magenta,cyan \"npm run start -w @mega/web\" \"npm run start -w @mega/api\""
   },
+  "dependencies": {
+    "typescript": "^5.9.3"
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "concurrently": "^9.2.1",
-    "prettier": "^3.9.7",
-    "typescript": "^5.9.3"
+    "prettier": "^3.9.7"
   }
 }
