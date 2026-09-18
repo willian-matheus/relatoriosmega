@@ -1,16 +1,28 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { Database } from "@mega/contracts";
 
-export function getSupabaseServerClient() {
+let client: SupabaseClient<Database> | null = null;
+
+export function getSupabaseServerClient(): SupabaseClient<Database> {
+  if (client) return client;
   const url = process.env.SUPABASE_URL;
   const key =
     process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
   if (!url || !key) {
     throw new Error(
-      "SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios.",
+      "SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios no ambiente.",
     );
   }
-  return createClient<Database>(url, key, {
+  client = createClient<Database>(url, key, {
     auth: { persistSession: false },
   });
+  return client;
+}
+
+export function getOptionalSupabaseServerClient(): SupabaseClient<Database> | null {
+  try {
+    return getSupabaseServerClient();
+  } catch {
+    return null;
+  }
 }

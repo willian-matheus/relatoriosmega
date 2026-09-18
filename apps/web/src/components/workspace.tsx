@@ -49,12 +49,13 @@ import { Kanban } from "./kanban";
 import { OpportunityDialog } from "./opportunity-dialog";
 import { ImportDialog } from "./import-dialog";
 
-type View = "overview" | "pipeline" | "reports" | "contacts";
+type View = "overview" | "pipeline" | "reports" | "contacts" | "integrations";
 const navigation = [
   { id: "overview", label: "Visão geral", icon: LayoutDashboard },
   { id: "pipeline", label: "Pipeline", icon: LayoutGrid },
   { id: "reports", label: "Relatórios", icon: FileBarChart2 },
   { id: "contacts", label: "Contatos", icon: Users },
+  { id: "integrations", label: "Google Drive", icon: FolderOpen },
 ] as const;
 const empty: WorkspaceData = { opportunities: [], reports: [], activities: [] };
 
@@ -395,7 +396,7 @@ export function Workspace() {
           <div className="demo-card">
             <span>
               <Sparkles size={15} />
-              Espaço de demonstração
+              Espaço de crescimento
             </span>
             <p>
               Seu próximo negócio
@@ -404,7 +405,7 @@ export function Workspace() {
             </p>
             <div>
               <i />
-              Dados temporários em memória
+              Supabase & Google Drive integrados
             </div>
           </div>
           <button
@@ -441,6 +442,27 @@ export function Workspace() {
             <strong>{navigation.find((n) => n.id === view)?.label}</strong>
           </div>
           <div className="topbar-right">
+            <button
+              type="button"
+              className="google-status-pill"
+              onClick={() => navigate("integrations")}
+              title={
+                googleStatus?.connected
+                  ? `Google Drive conectado (${googleStatus.email || ""})`
+                  : "Conectar Google Drive"
+              }
+            >
+              <FolderOpen size={15} />
+              <span>
+                {googleStatus?.connected ? "Drive Conectado" : "Conectar Google Drive"}
+              </span>
+              <span
+                className={
+                  googleStatus?.connected ? "online-dot" : "dot-disconnected"
+                }
+              />
+            </button>
+            <div className="top-divider" />
             <span className="top-date">{clock}</span>
             <div className="top-divider" />
             <div className="activity-container">
@@ -477,7 +499,9 @@ export function Workspace() {
                     ? "Visão geral"
                     : view === "reports"
                       ? "Central de relatórios"
-                      : "Seus contatos"}
+                      : view === "integrations"
+                        ? "Integração Google Drive"
+                        : "Seus contatos"}
                 <span className="title-dot">.</span>
               </h1>
               <p>
@@ -487,10 +511,45 @@ export function Workspace() {
                     ? "Uma visão clara do que está acontecendo no seu comercial."
                     : view === "reports"
                       ? "Transforme seus relatórios em novas oportunidades."
-                      : "Pessoas e empresas que fazem parte do seu pipeline."}
+                      : view === "integrations"
+                        ? "Sincronize arquivos e importe relatórios do Google Drive com renovação automática de tokens."
+                        : "Pessoas e empresas que fazem parte do seu pipeline."}
               </p>
             </div>
             <div className="heading-actions">
+              {(view === "reports" || view === "integrations") && (
+                googleStatus?.connected ? (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => navigate("integrations")}
+                    style={{
+                      borderColor: "rgba(91, 206, 176, 0.4)",
+                      background: "rgba(91, 206, 176, 0.08)",
+                      color: "#5bceb0",
+                    }}
+                  >
+                    <Check size={16} />
+                    Drive Conectado
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      window.location.href = "/api/integrations/google/connect";
+                    }}
+                    style={{
+                      borderColor: "rgba(171, 137, 250, 0.4)",
+                      background: "rgba(171, 137, 250, 0.12)",
+                      color: "#e5def5",
+                    }}
+                  >
+                    <FolderOpen size={16} />
+                    Conectar Google Drive
+                  </button>
+                )
+              )}
               <button
                 className="secondary-button"
                 disabled={disabled}
@@ -512,27 +571,34 @@ export function Workspace() {
           <div className="demo-strip">
             <span>
               <i />
-              Modo demonstração
+              Sistema Ativo
             </span>
             <p>
-              Explore o CRM com dados de exemplo. As alterações são temporárias.
+              Supabase PostgreSQL, Storage e Google Drive OAuth 2.0 integrados.
             </p>
-            <span className="demo-version">PRÉVIA 01</span>
+            <span className="demo-version">PRODUÇÃO</span>
           </div>
+          {loadError && (
+            <div className="load-error-banner" role="alert">
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <CircleX size={18} color="#f87171" />
+                <span>{loadError}</span>
+              </div>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => void load()}
+                style={{ color: "#fca5a5" }}
+              >
+                Tentar novamente
+              </button>
+            </div>
+          )}
           {loading ? (
             <div className="load-state" role="status">
               <LoaderCircle className="spin" size={25} />
               <h2>Preparando seu workspace</h2>
               <p>Carregando oportunidades e relatórios…</p>
-            </div>
-          ) : loadError ? (
-            <div className="load-state" role="alert">
-              <CircleX size={28} />
-              <h2>Não foi possível carregar o CRM</h2>
-              <p>{loadError}</p>
-              <button className="primary-button" onClick={() => void load()}>
-                Tentar novamente
-              </button>
             </div>
           ) : (
             <>
@@ -1167,6 +1233,313 @@ export function Workspace() {
                   </div>
                 </section>
               )}
+              {view === "integrations" && (
+                <section
+                  className="surface"
+                  style={{
+                    padding: "28px",
+                    borderRadius: "16px",
+                    border: "1px solid var(--line)",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      flexWrap: "wrap",
+                      gap: "20px",
+                      marginBottom: "28px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "16px",
+                        alignItems: "center",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: "54px",
+                          height: "54px",
+                          borderRadius: "14px",
+                          background:
+                            "linear-gradient(135deg, rgba(171, 137, 250, 0.2), rgba(114, 206, 177, 0.2))",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: "var(--purple)",
+                          border: "1px solid rgba(171, 137, 250, 0.35)",
+                          flexShrink: 0,
+                        }}
+                      >
+                        <FolderOpen size={30} />
+                      </div>
+                      <div>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "12px",
+                          }}
+                        >
+                          <h2
+                            style={{
+                              margin: 0,
+                              fontSize: "20px",
+                              fontWeight: 600,
+                            }}
+                          >
+                            Google Drive
+                          </h2>
+                          {googleStatus?.connected ? (
+                            <span className="valid-tag">
+                              <Check size={14} /> Conectado
+                            </span>
+                          ) : (
+                            <span
+                              style={{
+                                fontSize: "12px",
+                                padding: "4px 10px",
+                                borderRadius: "6px",
+                                background: "rgba(255,255,255,0.06)",
+                                color: "var(--muted)",
+                              }}
+                            >
+                              Desconectado
+                            </span>
+                          )}
+                        </div>
+                        <p
+                          style={{
+                            margin: "6px 0 0 0",
+                            color: "var(--muted)",
+                            fontSize: "14px",
+                          }}
+                        >
+                          {googleStatus?.connected
+                            ? `Conta vinculada: ${googleStatus.email || "Google Drive"} · Tokens salvos e renovados automaticamente no Supabase.`
+                            : "Conecte sua conta do Google Drive via OAuth 2.0 Web para sincronizar relatórios e planilhas diretamente."}
+                        </p>
+                      </div>
+                    </div>
+                    <div>
+                      {googleStatus?.connected ? (
+                        <div style={{ display: "flex", gap: "10px" }}>
+                          <button
+                            type="button"
+                            className="primary-button"
+                            onClick={testGoogleConnection}
+                            disabled={googleTesting}
+                          >
+                            {googleTesting ? (
+                              <LoaderCircle size={16} className="spinner" />
+                            ) : (
+                              <RefreshCw size={16} />
+                            )}
+                            {googleTesting
+                              ? "Testando..."
+                              : "Testar acesso ao Drive"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={disconnectGoogle}
+                            style={{
+                              padding: "10px 16px",
+                              background: "rgba(248, 113, 113, 0.1)",
+                              color: "#f87171",
+                              border: "1px solid rgba(248, 113, 113, 0.25)",
+                              borderRadius: "8px",
+                              fontSize: "14px",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "6px",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <LogOut size={15} /> Desconectar
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="primary-button"
+                          style={{ padding: "12px 24px", fontSize: "15px" }}
+                          onClick={() => {
+                            window.location.href =
+                              "/api/integrations/google/connect";
+                          }}
+                        >
+                          <FolderOpen size={18} />
+                          Conectar Google Drive
+                          <ArrowUpRight size={17} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {googleStatus?.connected && (
+                    <div
+                      style={{
+                        marginTop: "20px",
+                        paddingTop: "20px",
+                        borderTop: "1px solid var(--line)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          marginBottom: "14px",
+                        }}
+                      >
+                        <h3
+                          style={{
+                            margin: 0,
+                            fontSize: "15px",
+                            fontWeight: 600,
+                          }}
+                        >
+                          Arquivos recentes no Google Drive ({googleFiles.length})
+                        </h3>
+                        {googleStatus.lastTestedAt && (
+                          <span
+                            style={{ fontSize: "12px", color: "var(--muted)" }}
+                          >
+                            Última verificação:{" "}
+                            {new Date(googleStatus.lastTestedAt).toLocaleString(
+                              "pt-BR",
+                            )}
+                          </span>
+                        )}
+                      </div>
+                      {googleFiles.length === 0 ? (
+                        <p
+                          style={{ color: "var(--muted)", fontSize: "13px" }}
+                        >
+                          Nenhum arquivo listado ainda. Clique em "Testar acesso ao Drive" acima para sincronizar a lista de arquivos.
+                        </p>
+                      ) : (
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns:
+                              "repeat(auto-fill, minmax(280px, 1fr))",
+                            gap: "12px",
+                          }}
+                        >
+                          {googleFiles.map((file) => (
+                            <div
+                              key={file.id}
+                              style={{
+                                padding: "12px 16px",
+                                borderRadius: "8px",
+                                background: "rgba(255,255,255,0.03)",
+                                border: "1px solid var(--line)",
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "10px",
+                                  overflow: "hidden",
+                                }}
+                              >
+                                <FileSpreadsheet
+                                  size={18}
+                                  color="var(--purple)"
+                                  style={{ flexShrink: 0 }}
+                                />
+                                <span
+                                  style={{
+                                    fontSize: "13px",
+                                    fontWeight: 500,
+                                    whiteSpace: "nowrap",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                  }}
+                                  title={file.name}
+                                >
+                                  {file.name}
+                                </span>
+                              </div>
+                              {file.webViewLink && (
+                                <a
+                                  href={file.webViewLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "4px",
+                                    color: "var(--purple)",
+                                    fontSize: "12px",
+                                    flexShrink: 0,
+                                    marginLeft: "8px",
+                                  }}
+                                >
+                                  Abrir <ExternalLink size={12} />
+                                </a>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {!googleStatus?.connected && (
+                    <div
+                      style={{
+                        marginTop: "24px",
+                        padding: "20px",
+                        borderRadius: "10px",
+                        background: "rgba(255,255,255,0.02)",
+                        border: "1px dashed var(--line)",
+                      }}
+                    >
+                      <h4
+                        style={{
+                          margin: "0 0 10px 0",
+                          fontSize: "14px",
+                          fontWeight: 600,
+                          color: "#fff",
+                        }}
+                      >
+                        Como funciona a integração:
+                      </h4>
+                      <ol
+                        style={{
+                          margin: 0,
+                          paddingLeft: "20px",
+                          color: "var(--muted)",
+                          fontSize: "13px",
+                          lineHeight: "1.9",
+                        }}
+                      >
+                        <li>
+                          Clique em <strong>Conectar Google Drive</strong> acima.
+                        </li>
+                        <li>
+                          Faça login e autorize a permissão de leitura de arquivos e planilhas no Google.
+                        </li>
+                        <li>
+                          O Google retorna para o CRM e seus tokens de acesso são salvos de forma segura no Supabase.
+                        </li>
+                        <li>
+                          A renovação do token ocorre automaticamente em segundo plano, sem necessidade de novo login.
+                        </li>
+                      </ol>
+                    </div>
+                  )}
+                </section>
+              )}
               {view === "contacts" && (
                 <section className="surface contacts-surface">
                   <div className="surface-heading">
@@ -1328,8 +1701,8 @@ export function Workspace() {
             </li>
           </ol>
           <p>
-            Os dados são mantidos apenas enquanto a API está ligada. Banco de
-            dados e Google Drive entram depois.
+            Os dados são persistidos no Supabase (Postgres & Storage). Conecte
+            sua conta do Google Drive no menu lateral para sincronizar planilhas e relatórios.
           </p>
         </div>
       )}
