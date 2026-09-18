@@ -1,0 +1,24 @@
+{
+  "name": "mega-crm",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "predev": "npm run build -w @mega/contracts",
+    "dev": "concurrently -k -n WEB,API -c magenta,cyan \"npm run dev -w @mega/web\" \"npm run dev -w @mega/api\"",
+    "build": "npm run build -w @mega/contracts && npm run build -w @mega/api && npm run build -w @mega/web",
+    "typecheck": "npm run build -w @mega/contracts && npm run typecheck --workspaces --if-present",
+    "test": "npm run build -w @mega/contracts && npm run test -w @mega/api",
+    "format": "prettier --write apps packages samples README.md package.json",
+    "start": "concurrently -k -n WEB,API -c magenta,cyan \"npm run start -w @mega/web\" \"npm run start -w @mega/api\""
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "concurrently": "^9.2.1",
+    "prettier": "^3.9.7",
+    "typescript": "^5.9.3"
+  }
+}

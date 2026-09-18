@@ -1,0 +1,14 @@
+node_modules/
+.npm-cache/
+.next/
+dist/
+*.tsbuildinfo
+.env
+.env.local
+.env.*
+!.env.example
+.mcp.json
+.claude/
+artifacts/
+*.log
+supabase/.temp/
