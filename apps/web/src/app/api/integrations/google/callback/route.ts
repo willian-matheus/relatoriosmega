@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
   const error = searchParams.get("error");
 
   const baseUrl = new URL("/", request.url);
-  baseUrl.searchParams.set("view", "reports");
+  baseUrl.searchParams.set("view", "integrations");
 
   if (error || !code) {
     console.error("Erro no retorno do Google OAuth:", error);
@@ -22,7 +22,19 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const oauthClient = getGoogleOAuthClient();
+    const host = request.headers.get("host") || "localhost:3000";
+    const isLocal = host.includes("localhost") || host.includes("127.0.0.1");
+    const protocol =
+      request.headers.get("x-forwarded-proto") || (isLocal ? "http" : "https");
+
+    let redirectUri = process.env.GOOGLE_REDIRECT_URI;
+    if (isLocal) {
+      redirectUri = `http://${host}/api/integrations/google/callback`;
+    } else if (!redirectUri || redirectUri.includes("localhost")) {
+      redirectUri = `${protocol}://${host}/api/integrations/google/callback`;
+    }
+
+    const oauthClient = getGoogleOAuthClient(redirectUri);
     const { tokens } = await oauthClient.getToken(code);
     oauthClient.setCredentials(tokens);
 
