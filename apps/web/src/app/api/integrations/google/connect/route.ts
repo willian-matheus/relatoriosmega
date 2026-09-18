@@ -17,11 +17,16 @@ export async function GET(request: NextRequest) {
 
     const oauthClient = getGoogleOAuthClient(redirectUri);
 
+    const targetEmail =
+      request.nextUrl.searchParams.get("email") || "crmmegadev@gmail.com";
+
     const url = oauthClient.generateAuthUrl({
       access_type: "offline",
-      prompt: "consent",
+      prompt: "select_account consent",
+      login_hint: targetEmail,
       scope: [
-        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/drive.file",
         "https://www.googleapis.com/auth/userinfo.email",
       ],
     });

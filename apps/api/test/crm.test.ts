@@ -19,6 +19,11 @@ test("cria, edita, move e remove uma oportunidade sem banco", async () => {
   delete process.env.SUPABASE_URL;
   const service = new CrmService();
   const initial = (await service.snapshot()).opportunities.length;
+  assert.deepEqual(await service.snapshot(), {
+    opportunities: [],
+    reports: [],
+    activities: [],
+  });
   const created = await service.save(input);
   assert.equal(created.stage, "new");
   assert.equal((await service.snapshot()).opportunities.length, initial + 1);

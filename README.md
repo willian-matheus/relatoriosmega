@@ -28,11 +28,23 @@ O frontend encaminha `/api/*` para o NestJS, sem expor uma URL de API no cliente
 
 ## Dados e escopo desta primeira versão
 
-**Sem banco de dados e sem conexão MCP.** A API inicia com 11 oportunidades fictícias. Alterações, importações e atividades ficam em memória e são perdidas ao reiniciar a API (inclusive reinícios automáticos em desenvolvimento). Recarregar a página não reinicia os dados da API.
+O sistema inicia vazio, sem oportunidades, relatórios ou atividades fictícias. Com Supabase configurado, os dados são persistidos no banco. Sem Supabase, alterações, importações e atividades ficam em memória e são perdidas ao reiniciar a API (inclusive reinícios automáticos em desenvolvimento). Consultar um banco vazio não cria registros automaticamente.
 
 Não há autenticação ou isolamento por usuário. O servidor está limitado a `127.0.0.1` e foi preparado para demonstração local. Login, banco, regras comerciais definitivas, formatos reais de relatórios e integração com Google Drive serão implementados posteriormente.
 
 Os totais consideram todas as oportunidades da sessão, não um período fictício. A taxa de fechamento é a quantidade de cartões em Fechados dividida pelo total. Os responsáveis da demonstração são Ana Martins, Bruno Costa e Camila Lima.
+
+## Acompanhamento de relatórios
+
+Na aba **Relatórios**, consulte os relatórios disponíveis, documentos pendentes, dúvidas sem solução e a última atualização. A busca filtra pelo nome; os filtros **Com pendências** e **Com novidades** ajudam a priorizar o trabalho.
+
+Abra um relatório para solicitar documentos, marcar recebimento, registrar dúvidas e responder na mesma conversa. Cada dúvida pode apontar para um registro e uma página, seção ou referência. Autor, data e contexto são preservados, inclusive se o registro associado for removido. Responder não resolve automaticamente a dúvida; use **Marcar como resolvida** ou **Reabrir dúvida**.
+
+**Marcar como revisado** define uma referência compartilhada pela equipe. Registros criados depois dela aparecem como novos; registros modificados aparecem como alterados. A revisão não encerra documentos pendentes nem dúvidas abertas. O histórico anterior continua disponível.
+
+O acompanhamento é persistido no campo existente `reports.metadata.workflow`, sem migração de esquema. A gravação compara `updated_at` para evitar sobrescrever alterações simultâneas; em caso de conflito, atualize a lista e reenvie seu texto, que permanece no formulário. Na interface, o autor vem da sessão autenticada; chamadas diretas à API Nest local são identificadas como **API local**. Sem Supabase, o acompanhamento permanece apenas na memória do processo.
+
+Documentos pendentes são registrados e conferidos manualmente. Os destaques comparam registros vinculados à mesma importação; não comparam automaticamente versões de arquivos do Google Drive ou reimportações distintas.
 
 ## CSV inicial
 
@@ -83,3 +95,4 @@ Após o build, execute `npm start` para iniciar a aplicação e a API compiladas
 | DELETE | `/opportunities/:id`       | Excluir oportunidade                   |
 | POST   | `/imports/preview`         | Validar `{ name, rows }` e gerar token |
 | POST   | `/imports/:token/commit`   | Confirmar uma prévia validada          |
+| PATCH  | `/reports/:id`             | Registrar documentos, conversas, resolução e revisão |

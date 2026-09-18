@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ReportWorkflow } from "./report-workflow";
 
 export const stages = [
   { id: "new", label: "Novos leads", color: "#9d8dff", short: "Novos" },
@@ -53,6 +54,7 @@ export const importSchema = z.object({
   mimeType: z.string().optional(),
 });
 export type Report = {
+  workflow?: ReportWorkflow;
   id: string;
   name: string;
   count: number;
@@ -76,3 +78,4 @@ export type WorkspaceData = {
 };
 
 export * from "./database.types";
+export * from "./report-workflow";

@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
 import {
+  applyReportAction,
+  readReportWorkflow,
+  reportUpdateSchema,
+  ReportUpdateError,
+  ReportAuthor,
+  Json,
   Activity,
   importSchema,
   Opportunity,
@@ -10,10 +16,9 @@ import {
   WorkspaceData,
 } from "@mega/contracts";
 import { getOptionalSupabaseServerClient } from "./supabase-server";
-import { seed } from "./seed";
 
 // Memória temporária caso Supabase não esteja configurado
-let memoryOpportunities: Opportunity[] = seed();
+let memoryOpportunities: Opportunity[] = [];
 let memoryReports: Report[] = [];
 let memoryActivities: Activity[] = [];
 const previews = new Map<
@@ -48,6 +53,7 @@ function toReport(row: any): Report {
     id: row.id,
     name: row.name,
     count: row.count,
+    workflow: readReportWorkflow(row.metadata),
     filePath: row.file_path,
     fileSize: row.file_size ? Number(row.file_size) : null,
     mimeType: row.mime_type,
@@ -121,30 +127,9 @@ export async function getWorkspaceSnapshot(): Promise<WorkspaceData> {
       .limit(40),
   ]);
 
-  let opportunities = (oppRes.data || []).map(toOpportunity);
-
-  // Se o banco estiver vazio na primeira execução, popula os dados iniciais
-  if (opportunities.length === 0 && (repRes.data || []).length === 0) {
-    const initialRecords = seed().map((s) => ({
-      company: s.company,
-      contact: s.contact,
-      email: s.email,
-      value: s.value,
-      stage: s.stage,
-      owner: s.owner,
-      priority: s.priority,
-      source: s.source,
-      due_date: s.dueDate,
-      notes: s.notes,
-    }));
-    const inserted = await supabase
-      .from("opportunities")
-      .insert(initialRecords)
-      .select();
-    if (inserted.data) {
-      opportunities = inserted.data.map(toOpportunity);
-    }
-  }
+  if (oppRes.error || repRes.error || actRes.error)
+    throw new Error("Não foi possível carregar os dados do workspace.");
+  const opportunities = (oppRes.data || []).map(toOpportunity);
 
   return {
     opportunities,
@@ -178,6 +163,7 @@ export async function saveOpportunity(
     const result: Opportunity = {
       ...parsed.data,
       id: existing?.id || randomUUID(),
+      reportId: existing?.reportId,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     };
@@ -351,15 +337,17 @@ export async function commitImport(token: string): Promise<Report> {
   const supabase = getOptionalSupabaseServerClient();
   if (!supabase) {
     const now = new Date().toISOString();
+    const memoryReportId = randomUUID();
     const records = preview.data.rows.map((row) => ({
       ...row,
       id: randomUUID(),
+      reportId: memoryReportId,
       createdAt: now,
       updatedAt: now,
     }));
     memoryOpportunities.unshift(...records);
     const report: Report = {
-      id: randomUUID(),
+      id: memoryReportId,
       name: preview.data.name,
       count: records.length,
       createdAt: now,
@@ -430,10 +418,7 @@ export async function commitImport(token: string): Promise<Report> {
     .from("opportunities")
     .insert(rowsToInsert);
   if (oppsErr) {
-    console.error(
-      "Erro ao inserir oportunidades vinculadas:",
-      oppsErr.message,
-    );
+    console.error("Erro ao inserir oportunidades vinculadas:", oppsErr.message);
   }
 
   await logActivity(
@@ -466,4 +451,108 @@ export async function getReportDownloadUrl(
     throw new Error("Erro ao gerar link de download.");
   }
   return { url: data.signedUrl, name: report.name };
+}
+
+export async function updateReport(
+  id: string,
+  body: unknown,
+  author: ReportAuthor,
+): Promise<Report> {
+  const parsed = reportUpdateSchema.safeParse(body);
+  if (!parsed.success)
+    throw new ReportUpdateError(
+      parsed.error.issues.map((i) => i.message).join("; "),
+      400,
+    );
+  const { version, action } = parsed.data;
+  const supabase = getOptionalSupabaseServerClient();
+  if (!supabase) {
+    const report = memoryReports.find((r) => r.id === id);
+    if (!report) throw new ReportUpdateError("Relatório não encontrado.", 404);
+    if ((report.updatedAt ?? report.createdAt) !== version)
+      throw new ReportUpdateError(
+        "O relatório foi atualizado por outra pessoa. Atualize a lista e tente novamente.",
+        409,
+      );
+    const now = new Date(
+      Math.max(Date.now(), Date.parse(version) + 1),
+    ).toISOString();
+    try {
+      report.workflow = applyReportAction(
+        report.workflow ?? readReportWorkflow(null),
+        action,
+        author,
+        memoryOpportunities.filter((o) => o.reportId === id),
+        now,
+        randomUUID,
+      );
+    } catch (error) {
+      throw new ReportUpdateError(
+        error instanceof Error ? error.message : "Ação inválida.",
+        400,
+      );
+    }
+    report.updatedAt = now;
+    return report;
+  }
+  const { data: row, error } = await supabase
+    .from("reports")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error)
+    throw new ReportUpdateError("Não foi possível carregar o relatório.", 503);
+  if (!row) throw new ReportUpdateError("Relatório não encontrado.", 404);
+  if (row.updated_at !== version)
+    throw new ReportUpdateError(
+      "O relatório foi atualizado por outra pessoa. Atualize a lista e tente novamente.",
+      409,
+    );
+  const records = await supabase
+    .from("opportunities")
+    .select("*")
+    .eq("report_id", id);
+  if (records.error)
+    throw new ReportUpdateError("Não foi possível carregar os registros.", 503);
+  let workflow;
+  try {
+    workflow = applyReportAction(
+      readReportWorkflow(row.metadata),
+      action,
+      author,
+      (records.data ?? []).map(toOpportunity),
+      new Date().toISOString(),
+      randomUUID,
+    );
+  } catch (error) {
+    throw new ReportUpdateError(
+      error instanceof Error ? error.message : "Ação inválida.",
+      400,
+    );
+  }
+  const metadata =
+    row.metadata &&
+    typeof row.metadata === "object" &&
+    !Array.isArray(row.metadata)
+      ? row.metadata
+      : {};
+  // Compare-and-swap prevents one collaborator from overwriting another's reply.
+  const saved = await supabase
+    .from("reports")
+    .update({ metadata: { ...metadata, workflow } as Json })
+    .eq("id", id)
+    .eq("updated_at", version)
+    .select("*")
+    .maybeSingle();
+  if (saved.error)
+    throw new ReportUpdateError(
+      "Não foi possível salvar o acompanhamento.",
+      503,
+    );
+  if (!saved.data)
+    throw new ReportUpdateError(
+      "O relatório mudou enquanto você escrevia. Atualize a lista e tente novamente.",
+      409,
+    );
+  return toReport(saved.data);
 }

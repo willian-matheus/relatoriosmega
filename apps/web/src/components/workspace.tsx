@@ -10,12 +10,11 @@ import {
   WorkspaceData,
 } from "@mega/contracts";
 import {
-  ArrowDownLeft,
   ArrowDownToLine,
-  ArrowRight,
   ArrowUpRight,
   BarChart3,
   Bell,
+  Building2,
   Check,
   ChevronDown,
   ChevronRight,
@@ -24,6 +23,7 @@ import {
   FileBarChart2,
   FileSpreadsheet,
   FolderOpen,
+  FolderSync,
   LayoutDashboard,
   LayoutGrid,
   List,
@@ -42,20 +42,26 @@ import {
   ExternalLink,
   LogOut,
   RefreshCw,
+  History,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { dateLabel, initials, localDate, money } from "@/lib/format";
 import { Kanban } from "./kanban";
 import { OpportunityDialog } from "./opportunity-dialog";
 import { ImportDialog } from "./import-dialog";
+import { ReportCenter } from "./report-center";
+import { GesttaImportDialog } from "./gestta-import-dialog";
+import { GesttaSyncDialog } from "./gestta-sync-dialog";
+import { HistoryView } from "./history-view";
 
-type View = "overview" | "pipeline" | "reports" | "contacts" | "integrations";
+type View = "overview" | "pipeline" | "reports" | "history" | "contacts" | "integrations";
 const navigation = [
   { id: "overview", label: "Visão geral", icon: LayoutDashboard },
   { id: "pipeline", label: "Pipeline", icon: LayoutGrid },
   { id: "reports", label: "Relatórios", icon: FileBarChart2 },
+  { id: "history", label: "Histórico", icon: History },
   { id: "contacts", label: "Contatos", icon: Users },
-  { id: "integrations", label: "Google Drive", icon: FolderOpen },
+  { id: "integrations", label: "Integrações", icon: SlidersHorizontal },
 ] as const;
 const empty: WorkspaceData = { opportunities: [], reports: [], activities: [] };
 
@@ -101,6 +107,83 @@ export function Workspace() {
     }>
   >([]);
 
+  const [currentUser, setCurrentUser] = useState<{
+    email: string;
+    name: string;
+  } | null>(null);
+
+  const checkSession = useCallback(async () => {
+    try {
+      const res = await fetch("/api/auth/session");
+      if (res.ok) {
+        const d = await res.json();
+        if (d.authenticated && d.user) {
+          setCurrentUser(d.user);
+        }
+      }
+    } catch {
+      // silencioso
+    }
+  }, []);
+
+  const [gesttaStatus, setGesttaStatus] = useState<{
+    connected: boolean;
+    companyName?: string;
+    companyCnpj?: string;
+    userName?: string;
+    email?: string;
+    totalCustomers?: number;
+    lastTestedAt?: string | null;
+  } | null>(null);
+  const [gesttaTesting, setGesttaTesting] = useState(false);
+  const [gesttaImportOpen, setGesttaImportOpen] = useState(false);
+  const [gesttaSyncOpen, setGesttaSyncOpen] = useState(false);
+
+  const checkGesttaStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/integrations/gestta/status", {
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGesttaStatus(data);
+      }
+    } catch {
+      // silencioso
+    }
+  }, []);
+
+  async function testGesttaConnection() {
+    setGesttaTesting(true);
+    try {
+      const res = await fetch("/api/integrations/gestta/connect", {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (data.success) {
+        setToast({ text: "Conexão com Gestta validada com sucesso!" });
+        void checkGesttaStatus();
+      } else {
+        setToast({ text: data.error || "Falha ao conectar Gestta.", error: true });
+      }
+    } catch {
+      setToast({ text: "Erro ao comunicar com o Gestta.", error: true });
+    } finally {
+      setGesttaTesting(false);
+    }
+  }
+
+  async function disconnectGestta() {
+    if (!confirm("Deseja desconectar a integração com o Gestta?")) return;
+    try {
+      await fetch("/api/integrations/gestta/disconnect", { method: "POST" });
+      setToast({ text: "Gestta desconectado." });
+      setGesttaStatus({ connected: false });
+    } catch {
+      setToast({ text: "Erro ao desconectar Gestta.", error: true });
+    }
+  }
+
   const checkGoogleStatus = useCallback(async () => {
     try {
       const res = await fetch("/api/integrations/google/status", {
@@ -114,6 +197,15 @@ export function Workspace() {
       // silencioso
     }
   }, []);
+
+  async function handleLogout() {
+    if (!confirm("Deseja realmente sair da plataforma?")) return;
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      window.location.href = "/login";
+    }
+  }
 
   const refresh = useCallback(async () => {
     const result = await api<WorkspaceData>("/workspace");
@@ -135,6 +227,8 @@ export function Workspace() {
   useEffect(() => {
     void load();
     void checkGoogleStatus();
+    void checkGesttaStatus();
+    void checkSession();
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       if (params.get("google") === "connected") {
@@ -418,12 +512,29 @@ export function Workspace() {
             <ArrowUpRight size={14} />
           </button>
           <div className="profile">
-            <span className="profile-avatar">M</span>
-            <div>
-              <strong>Equipe Mega</strong>
-              <small>Workspace comercial</small>
+            <span className="profile-avatar">
+              {currentUser?.name ? currentUser.name[0].toUpperCase() : "M"}
+            </span>
+            <div style={{ overflow: "hidden", minWidth: 0 }}>
+              <strong style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "block" }}>
+                {currentUser?.name || "Equipe Mega"}
+              </strong>
+              <small style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "block" }}>
+                {currentUser?.email || "Workspace comercial"}
+              </small>
             </div>
-            <span className="online-dot" />
+            <div className="profile-actions">
+              <span className="online-dot" title="Online" />
+              <button
+                type="button"
+                className="logout-btn"
+                onClick={handleLogout}
+                title="Sair da plataforma"
+                aria-label="Sair"
+              >
+                <LogOut size={15} />
+              </button>
+            </div>
           </div>
         </div>
       </aside>
@@ -442,6 +553,28 @@ export function Workspace() {
             <strong>{navigation.find((n) => n.id === view)?.label}</strong>
           </div>
           <div className="topbar-right">
+            <button
+              type="button"
+              className="google-status-pill"
+              onClick={() => navigate("integrations")}
+              title={
+                gesttaStatus?.connected
+                  ? `Gestta: ${gesttaStatus.companyName || "Mega Contabilidade"} (${gesttaStatus.totalCustomers || 514} clientes)`
+                  : "Conectar Gestta"
+              }
+            >
+              <Building2 size={15} />
+              <span>
+                {gesttaStatus?.connected
+                  ? `Gestta: ${gesttaStatus.totalCustomers || 514} clientes`
+                  : "Conectar Gestta"}
+              </span>
+              <span
+                className={
+                  gesttaStatus?.connected ? "online-dot" : "dot-disconnected"
+                }
+              />
+            </button>
             <button
               type="button"
               className="google-status-pill"
@@ -499,9 +632,11 @@ export function Workspace() {
                     ? "Visão geral"
                     : view === "reports"
                       ? "Central de relatórios"
-                      : view === "integrations"
-                        ? "Integração Google Drive"
-                        : "Seus contatos"}
+                      : view === "history"
+                        ? "Histórico Gestta & Google Drive"
+                        : view === "integrations"
+                          ? "Integrações & Conexões"
+                          : "Seus contatos"}
                 <span className="title-dot">.</span>
               </h1>
               <p>
@@ -511,13 +646,15 @@ export function Workspace() {
                     ? "Uma visão clara do que está acontecendo no seu comercial."
                     : view === "reports"
                       ? "Transforme seus relatórios em novas oportunidades."
-                      : view === "integrations"
-                        ? "Sincronize arquivos e importe relatórios do Google Drive com renovação automática de tokens."
-                        : "Pessoas e empresas que fazem parte do seu pipeline."}
+                      : view === "history"
+                        ? "Consulte relatórios e tarefas resgatados automaticamente do Gestta e salvos no Google Drive."
+                        : view === "integrations"
+                          ? "Sincronize arquivos e importe relatórios do Google Drive com renovação automática de tokens."
+                          : "Pessoas e empresas que fazem parte do seu pipeline."}
               </p>
             </div>
             <div className="heading-actions">
-              {(view === "reports" || view === "integrations") && (
+              {(view === "reports" || view === "integrations" || view === "history") && (
                 googleStatus?.connected ? (
                   <button
                     type="button"
@@ -891,111 +1028,18 @@ export function Workspace() {
               )}
               {view === "reports" && (
                 <section className="reports-section">
-                  <div className="reports-intro">
-                    <div className="report-illustration">
-                      <div className="illustration-orbit" />
-                      <div className="illustration-file">
-                        <FileSpreadsheet size={44} />
-                        <span />
-                        <span />
-                        <span />
-                      </div>
-                      <span className="illustration-badge">
-                        <ArrowDownLeft size={21} />
-                      </span>
-                    </div>
-                    <span className="eyebrow">
-                      DOS DADOS À PRÓXIMA CONVERSA
-                    </span>
-                    <h2>
-                      Seu relatório tem
-                      <br />
-                      novas possibilidades.
-                    </h2>
-                    <p>
-                      Traga seus contatos em CSV, confira a prévia
-                      <br />e organize cada oportunidade no pipeline.
-                    </p>
-                    <button
-                      className="primary-button"
-                      onClick={() => setImportOpen(true)}
-                    >
-                      <Plus size={17} />
-                      Selecionar relatório
-                      <ArrowRight size={16} />
-                    </button>
-                    <span className="report-formats">
-                      CSV · Até 500 registros por importação
-                    </span>
-                  </div>
-                  <div className="surface report-history">
-                    <div className="surface-heading">
-                      <h2>Histórico de importações</h2>
-                      <span className="count-pill">{data.reports.length}</span>
-                    </div>
-                    {data.reports.length === 0 ? (
-                      <Empty
-                        title="Seus relatórios vão aparecer aqui"
-                        text="Após importar, acompanhe o nome, a data e a quantidade de registros de cada arquivo."
-                      />
-                    ) : (
-                      <div className="table-scroll">
-                        <table>
-                          <thead>
-                            <tr>
-                              <th>Relatório</th>
-                              <th>Registros</th>
-                              <th>Importado em</th>
-                              <th>Status</th>
-                              <th style={{ textAlign: "right" }}>Arquivo</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {data.reports.map((r) => (
-                              <tr key={r.id}>
-                                <td>
-                                  <span className="table-file">
-                                    <FileSpreadsheet size={19} />
-                                    {r.name}
-                                  </span>
-                                </td>
-                                <td>{r.count}</td>
-                                <td>
-                                  {new Date(r.createdAt).toLocaleString(
-                                    "pt-BR",
-                                  )}
-                                </td>
-                                <td>
-                                  <span className="valid-tag">
-                                    <Check size={12} />
-                                    Importado
-                                  </span>
-                                </td>
-                                <td style={{ textAlign: "right" }}>
-                                  {r.filePath ? (
-                                    <button
-                                      type="button"
-                                      className="icon-button"
-                                      style={{
-                                        display: "inline-flex",
-                                        padding: "6px",
-                                      }}
-                                      title="Baixar arquivo original do Storage"
-                                      onClick={() => downloadReport(r.id)}
-                                    >
-                                      <ArrowDownToLine size={16} />
-                                    </button>
-                                  ) : (
-                                    <span style={{ opacity: 0.4 }}>—</span>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
+                  <ReportCenter
+                    reports={data.reports}
+                    opportunities={data.opportunities}
+                    onImport={() => setImportOpen(true)}
+                    onDownload={downloadReport}
+                    onRefresh={refresh}
+                    onUpdated={(report) => setData(current => ({
+                      ...current,
+                      reports: current.reports.map(r => r.id === report.id ? report : r),
+                    }))}
+                    onOpenRecord={(item) => setEditor({ item, stage: item.stage })}
+                  />
                   <div
                     className="surface"
                     style={{
@@ -1234,14 +1278,264 @@ export function Workspace() {
                 </section>
               )}
               {view === "integrations" && (
-                <section
-                  className="surface"
-                  style={{
-                    padding: "28px",
-                    borderRadius: "16px",
-                    border: "1px solid var(--line)",
-                  }}
-                >
+                <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+                  {/* Card Gestta Contabilidade */}
+                  <section
+                    className="surface"
+                    style={{
+                      padding: "28px",
+                      borderRadius: "16px",
+                      border: "1px solid var(--line)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "flex-start",
+                        flexWrap: "wrap",
+                        gap: "20px",
+                        marginBottom: "20px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: "16px",
+                          alignItems: "center",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: "54px",
+                            height: "54px",
+                            borderRadius: "14px",
+                            background:
+                              "linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(147, 51, 234, 0.2))",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            color: "#34d399",
+                            border: "1px solid rgba(52, 211, 153, 0.35)",
+                            flexShrink: 0,
+                          }}
+                        >
+                          <Building2 size={30} />
+                        </div>
+                        <div>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "12px",
+                            }}
+                          >
+                            <h2
+                              style={{
+                                margin: 0,
+                                fontSize: "20px",
+                                fontWeight: 600,
+                              }}
+                            >
+                              Gestta Contabilidade
+                            </h2>
+                            {gesttaStatus?.connected ? (
+                              <span className="valid-tag">
+                                <Check size={14} /> Conectado
+                              </span>
+                            ) : (
+                              <span
+                                style={{
+                                  fontSize: "12px",
+                                  padding: "4px 10px",
+                                  borderRadius: "6px",
+                                  background: "rgba(255,255,255,0.06)",
+                                  color: "var(--muted)",
+                                }}
+                              >
+                                Desconectado
+                              </span>
+                            )}
+                          </div>
+                          <p
+                            style={{
+                              margin: "6px 0 0 0",
+                              color: "var(--muted)",
+                              fontSize: "14px",
+                            }}
+                          >
+                            Plataforma oficial de gestão contábil, empresas e tarefas fiscais da Mega Contabilidade.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "10px",
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        {gesttaStatus?.connected ? (
+                          <>
+                            <button
+                              type="button"
+                              className="primary-button"
+                              onClick={() => setGesttaImportOpen(true)}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "8px",
+                                padding: "10px 18px",
+                                fontSize: "14px",
+                              }}
+                            >
+                              <Building2 size={16} />
+                              Importar Clientes ({gesttaStatus.totalCustomers || 514})
+                            </button>
+                            <button
+                              type="button"
+                              className="primary-button"
+                              onClick={() => setGesttaSyncOpen(true)}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "8px",
+                                padding: "10px 18px",
+                                fontSize: "14px",
+                                background: "linear-gradient(135deg, #10b981, #059669)",
+                                border: "none",
+                                boxShadow: "0 4px 12px rgba(16, 185, 129, 0.25)",
+                              }}
+                            >
+                              <FolderSync size={16} />
+                              Sincronizar no Google Drive
+                            </button>
+                            <a
+                              href="https://app.gestta.com.br/"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="secondary-button"
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                padding: "10px 14px",
+                                fontSize: "14px",
+                                textDecoration: "none",
+                              }}
+                            >
+                              Acessar Gestta <ExternalLink size={14} />
+                            </a>
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              onClick={testGesttaConnection}
+                              disabled={gesttaTesting}
+                              style={{ padding: "10px 14px", fontSize: "14px" }}
+                            >
+                              <RefreshCw
+                                size={15}
+                                className={gesttaTesting ? "spin-icon" : ""}
+                              />
+                              Testar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={disconnectGestta}
+                              style={{
+                                padding: "10px 14px",
+                                background: "rgba(248, 113, 113, 0.1)",
+                                color: "#f87171",
+                                border: "1px solid rgba(248, 113, 113, 0.25)",
+                                borderRadius: "8px",
+                                fontSize: "14px",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                cursor: "pointer",
+                              }}
+                            >
+                              <LogOut size={15} /> Desconectar
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="primary-button"
+                            onClick={testGesttaConnection}
+                            disabled={gesttaTesting}
+                            style={{ padding: "12px 24px", fontSize: "15px" }}
+                          >
+                            <Building2 size={18} />
+                            Conectar Gestta
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Detalhes da Conexão Gestta */}
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                        gap: "14px",
+                        background: "rgba(255, 255, 255, 0.02)",
+                        border: "1px solid var(--line)",
+                        borderRadius: "10px",
+                        padding: "16px 20px",
+                      }}
+                    >
+                      <div>
+                        <span style={{ fontSize: "11px", color: "var(--muted)", textTransform: "uppercase", fontWeight: 600 }}>
+                          Empresa Conectada
+                        </span>
+                        <div style={{ fontSize: "14px", fontWeight: 600, color: "#fff", marginTop: "4px" }}>
+                          {gesttaStatus?.companyName || "MEGA CONTABILIDADE"}
+                        </div>
+                        {gesttaStatus?.companyCnpj && (
+                          <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+                            CNPJ: {gesttaStatus.companyCnpj}
+                          </span>
+                        )}
+                      </div>
+
+                      <div>
+                        <span style={{ fontSize: "11px", color: "var(--muted)", textTransform: "uppercase", fontWeight: 600 }}>
+                          Usuário Gestta
+                        </span>
+                        <div style={{ fontSize: "14px", fontWeight: 600, color: "#fff", marginTop: "4px" }}>
+                          {gesttaStatus?.userName || "Rodrigo Ferreira"}
+                        </div>
+                        <span style={{ fontSize: "12px", color: "var(--purple)" }}>
+                          {gesttaStatus?.email || "financeiro@megacontabilidade.com"}
+                        </span>
+                      </div>
+
+                      <div>
+                        <span style={{ fontSize: "11px", color: "var(--muted)", textTransform: "uppercase", fontWeight: 600 }}>
+                          Carteira de Clientes
+                        </span>
+                        <div style={{ fontSize: "18px", fontWeight: 700, color: "#34d399", marginTop: "2px" }}>
+                          {gesttaStatus?.totalCustomers || 514} empresas
+                        </div>
+                        <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+                          Disponíveis para sincronização
+                        </span>
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* Card Google Drive */}
+                  <section
+                    className="surface"
+                    style={{
+                      padding: "28px",
+                      borderRadius: "16px",
+                      border: "1px solid var(--line)",
+                    }}
+                  >
                   <div
                     style={{
                       display: "flex",
@@ -1538,6 +1832,12 @@ export function Workspace() {
                       </ol>
                     </div>
                   )}
+                  </section>
+                </div>
+              )}
+              {view === "history" && (
+                <section className="history-section" style={{ width: "100%" }}>
+                  <HistoryView />
                 </section>
               )}
               {view === "contacts" && (
@@ -1657,15 +1957,30 @@ export function Workspace() {
           onImported={async () => {
             await refresh();
             setView("pipeline");
-            setQuery("");
-            setOwner("all");
-            setPriority("all");
-            setToast({
-              text: "Relatório importado. Os novos contatos já estão no pipeline.",
-            });
+            setToast({ text: "Relatório importado com sucesso." });
           }}
         />
       )}
+      <GesttaImportDialog
+        open={gesttaImportOpen}
+        onClose={() => setGesttaImportOpen(false)}
+        onSuccess={(count) => {
+          void refresh();
+          setToast({
+            text: `${count} cliente(s) do Gestta importado(s) para o pipeline!`,
+          });
+        }}
+      />
+      <GesttaSyncDialog
+        open={gesttaSyncOpen}
+        onClose={() => setGesttaSyncOpen(false)}
+        onSuccess={() => {
+          void refresh();
+          setToast({
+            text: "Tarefas do Gestta sincronizadas com o CRM e Google Drive com sucesso!",
+          });
+        }}
+      />
       {toast && (
         <div
           className={`toast ${toast.error ? "error" : ""}`}

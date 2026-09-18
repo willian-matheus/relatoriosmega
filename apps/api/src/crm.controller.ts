@@ -3,11 +3,13 @@ import {
   Controller,
   Delete,
   Get,
+  HttpException,
   Param,
   Patch,
   Post,
 } from "@nestjs/common";
 import { CrmService } from "./crm.service";
+import { ReportUpdateError } from "@mega/contracts";
 import { getSupabaseClient } from "./supabase";
 
 @Controller()
@@ -60,5 +62,19 @@ export class CrmController {
   @Get("reports/:id/download")
   async download(@Param("id") id: string) {
     return this.crm.getReportDownloadUrl(id);
+  }
+
+  @Patch("reports/:id")
+  async updateReport(@Param("id") id: string, @Body() body: unknown) {
+    try {
+      return await this.crm.updateReport(id, body, {
+        name: "API local",
+        email: "",
+      });
+    } catch (error) {
+      if (error instanceof ReportUpdateError)
+        throw new HttpException(error.message, error.status);
+      throw error;
+    }
   }
 }
