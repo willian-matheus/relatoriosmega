@@ -11,7 +11,6 @@ import {
   ShieldCheck,
   AlertCircle,
   Loader2,
-  Sparkles,
 } from "lucide-react";
 
 export default function LoginPage() {
@@ -114,7 +113,6 @@ export default function LoginPage() {
             <div className="login-field">
               <div className="login-field-header">
                 <label htmlFor="login-password">Senha de Acesso</label>
-                <span className="login-field-hint">Gestta ou mega2026</span>
               </div>
               <div className="login-input-box">
                 <Lock size={17} className="login-input-icon" />
@@ -158,15 +156,6 @@ export default function LoginPage() {
               )}
             </button>
           </form>
-
-          <div className="login-footer">
-            <div className="login-tip">
-              <Sparkles size={14} />
-              <span>
-                Acesso com credencial Gestta (<code>financeiro@megacontabilidade.com</code>) ou senha da plataforma (<code>mega2026</code>).
-              </span>
-            </div>
-          </div>
         </div>
 
         <div className="login-bottom-credits">
