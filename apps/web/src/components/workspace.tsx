@@ -33,7 +33,6 @@ import {
   Plus,
   Search,
   SlidersHorizontal,
-  Sparkles,
   Target,
   TrendingUp,
   Users,
@@ -439,13 +438,6 @@ export function Workspace() {
           </span>
           <span className="brand-dot" />
         </a>
-        <div className="workspace-switch">
-          <span className="workspace-initial">M</span>
-          <div>
-            <strong>Workspace Mega</strong>
-            <small>Equipe comercial</small>
-          </div>
-        </div>
         <span className="nav-label">WORKSPACE</span>
         <nav aria-label="Navegação principal">
           {navigation.map(({ id, label, icon: Icon }) => (
@@ -464,44 +456,7 @@ export function Workspace() {
             </button>
           ))}
         </nav>
-        <div className="sidebar-divider" />
-        <div className="team-heading">
-          <span className="nav-label">SEU TIME</span>
-          <span className="team-total">3</span>
-        </div>
-        <div className="team-list">
-          {owners.map((name, i) => (
-            <button
-              key={name}
-              onClick={() => {
-                setView("pipeline");
-                setOwner(name);
-                setSidebar(false);
-                setShowFilters(true);
-              }}
-            >
-              <span className={`avatar avatar-${i}`}>{initials(name)}</span>
-              <span>{name}</span>
-              <i />
-            </button>
-          ))}
-        </div>
         <div className="sidebar-bottom">
-          <div className="demo-card">
-            <span>
-              <Sparkles size={15} />
-              Espaço de crescimento
-            </span>
-            <p>
-              Seu próximo negócio
-              <br />
-              começa com uma boa conexão.
-            </p>
-            <div>
-              <i />
-              Supabase & Google Drive integrados
-            </div>
-          </div>
           <button
             className="help-button"
             onClick={() => setHelpOpen(!helpOpen)}

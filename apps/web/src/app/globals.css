@@ -128,6 +128,7 @@ button {
   font-size: 27px;
   font-weight: 800;
   letter-spacing: -1.3px;
+  margin-bottom: 24px;
 }
 .brand-symbol {
   display: grid;
