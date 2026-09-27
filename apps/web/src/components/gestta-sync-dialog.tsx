@@ -143,19 +143,23 @@ export function GesttaSyncDialog({
                   >
                     📁 Mega Contabilidade - Gestta
                     <br />
+                    &nbsp;&nbsp;├── 📄 Relatorio_Geral_Sincronizacao.pdf
+                    <br />
                     &nbsp;&nbsp;└── 📁 [Nome da Empresa]
                     <br />
-                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── 📁 Competência
-                    [AAAA-MM]
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── 📁 Competência [AAAA-MM]
                     <br />
-                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└──
-                    📁 [Nome da Tarefa]
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── 📄 Relatorio_Competencia_[AAAA-MM].pdf
                     <br />
-                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├──
-                    📄 Relatorio_Tarefa_Gestta.txt
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── 📄 Resumo_Competencia_[AAAA-MM].csv
                     <br />
-                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└──
-                    📄 detalhes_tarefa.json
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── 📁 [Nome da Tarefa]
+                    <br />
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── 📄 Relatorio_Tarefa_Gestta.pdf (PDF Oficial)
+                    <br />
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── 📄 Relatorio_Tarefa_Gestta.txt
+                    <br />
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── 📄 detalhes_tarefa.json
                   </div>
                 </li>
               </ul>

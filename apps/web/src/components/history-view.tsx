@@ -298,7 +298,7 @@ export function HistoryView() {
                 lineHeight: "1.4",
               }}
             >
-              A cada 10 minutos o CRM se conecta ao Gestta, extrai relatórios novos, salva no banco e sincroniza pastas no Google Drive.
+              O CRM extrai as tarefas e documentos contábeis do Gestta, consolida em relatórios PDF profissionais no CRM e organiza as pastas automaticamente no Google Drive.
             </p>
           </div>
         </div>
@@ -1176,22 +1176,23 @@ export function HistoryView() {
                                         href={task.fileLink}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        title="Abrir Relatório da Tarefa no Google Drive (.txt)"
+                                        title="Abrir Relatório da Tarefa no Google Drive (PDF)"
                                         style={{
                                           display: "flex",
                                           alignItems: "center",
-                                          gap: "5px",
-                                          padding: "5px 10px",
+                                          gap: "6px",
+                                          padding: "5px 12px",
                                           borderRadius: "6px",
-                                          background: "rgba(171, 137, 250, 0.1)",
-                                          border: "1px solid rgba(171, 137, 250, 0.25)",
-                                          color: "var(--purple)",
+                                          background: "rgba(239, 68, 68, 0.12)",
+                                          border: "1px solid rgba(239, 68, 68, 0.35)",
+                                          color: "#f87171",
                                           fontSize: "12px",
-                                          fontWeight: 500,
+                                          fontWeight: 600,
+                                          transition: "all 0.15s ease",
                                         }}
                                       >
-                                        <FileText size={13} />
-                                        Relatório .txt
+                                        <FileText size={13} color="#f87171" />
+                                        Relatório PDF
                                         <ExternalLink size={10} />
                                       </a>
                                     ) : (

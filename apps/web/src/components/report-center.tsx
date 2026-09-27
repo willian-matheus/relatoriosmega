@@ -21,6 +21,16 @@ import { money } from "@/lib/format";
 import "./report-center.css";
 
 const date = (value: string) => new Date(value).toLocaleString("pt-BR");
+const calendarMonth = (value: string | Date) =>
+  new Intl.DateTimeFormat("pt-BR", {
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "America/Sao_Paulo",
+  }).format(new Date(value));
+const calendarDay = (value: string | Date) =>
+  new Date(value).toLocaleDateString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+  });
 const statusLabel: Record<string, string> = {
   completed: "Disponível",
   pending: "Pendente",
@@ -50,12 +60,50 @@ export function ReportCenter({
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [period, setPeriod] = useState(6);
+  const now = new Date();
+  const currentMonth = calendarMonth(now);
+  const available = reports.filter(
+    (r) => !r.status || r.status === "completed",
+  );
+  const newThisMonth = available.filter(
+    (r) => calendarMonth(r.createdAt) === currentMonth,
+  ).length;
+  const [month, year] = currentMonth.split("/").map(Number);
+  const months = Array.from({ length: period }, (_, i) => {
+    const start = new Date(Date.UTC(year, month - period + i, 15, 12));
+    const key = calendarMonth(start);
+    return {
+      key,
+      label: start.toLocaleDateString("pt-BR", {
+        month: "short",
+        year: "2-digit",
+        timeZone: "America/Sao_Paulo",
+      }),
+      count: available.filter((r) => calendarMonth(r.createdAt) === key).length,
+    };
+  });
+  const chartMax = Math.max(1, ...months.map((m) => m.count));
   const summaries = reports.map((report) => ({
     report,
     ...reportSummary(report, opportunities),
   }));
   const pending = summaries.reduce((n, s) => n + s.pendingDocuments, 0);
   const unresolved = summaries.reduce((n, s) => n + s.unresolved, 0);
+  const needsAttention = (s: (typeof summaries)[number]) =>
+    s.pendingDocuments > 0 ||
+    s.unresolved > 0 ||
+    s.report.status === "pending" ||
+    s.report.status === "failed";
+  const hasChanges = (s: (typeof summaries)[number]) =>
+    s.newRecords > 0 || s.changedRecords > 0 || s.changes.length > 0;
+  const attention = summaries.filter(needsAttention);
+  const changed = summaries.filter(hasChanges);
+  const received = summaries.reduce(
+    (n, s) =>
+      n + s.workflow.documents.filter((d) => d.status === "received").length,
+    0,
+  );
   const latest = summaries
     .map((s) => s.lastUpdated)
     .sort((a, b) => Date.parse(b) - Date.parse(a))[0];
@@ -92,23 +140,16 @@ export function ReportCenter({
         .toLocaleLowerCase("pt-BR")
         .includes(query.toLocaleLowerCase("pt-BR")) &&
       (filter === "all" ||
-        (filter === "pending" &&
-          (s.pendingDocuments > 0 ||
-            s.unresolved > 0 ||
-            s.report.status === "pending" ||
-            s.report.status === "failed")) ||
-        (filter === "changes" &&
-          (s.newRecords > 0 || s.changedRecords > 0 || s.changes.length > 0))),
+        (filter === "pending" && needsAttention(s)) ||
+        (filter === "changes" && hasChanges(s))),
   );
   return (
     <div className="report-center">
       <div className="report-center-heading">
         <div>
           <span className="eyebrow">ACOMPANHAMENTO</span>
-          <h2>Relatórios e pendências</h2>
-          <p>
-            As informações, os próximos passos e as conversas no mesmo lugar.
-          </p>
+          <h2>Seu acompanhamento em dia</h2>
+          <p>Recebimentos, novidades e próximos passos em um só lugar.</p>
         </div>
         <div className="report-actions">
           <button
@@ -127,34 +168,153 @@ export function ReportCenter({
       <div className="report-summary" aria-label="Resumo dos relatórios">
         <div>
           <span>Relatórios disponíveis</span>
-          <strong>
-            {
-              reports.filter((r) => !r.status || r.status === "completed")
-                .length
-            }
-          </strong>
+          <strong>{available.length}</strong>
+        </div>
+        <div>
+          <span>Novos neste mês</span>
+          <strong>{newThisMonth}</strong>
         </div>
         <div>
           <span>Documentos pendentes</span>
           <strong>{pending}</strong>
         </div>
         <div>
-          <span>Dúvidas sem solução</span>
-          <strong>{unresolved}</strong>
-        </div>
-        <div>
           <span>Última atualização</span>
           <strong className="report-date">
-            {latest ? date(latest) : "Ainda sem registros"}
+            {latest
+              ? calendarDay(latest) === calendarDay(now)
+                ? `Hoje às ${new Date(latest).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" })}`
+                : new Date(latest).toLocaleString("pt-BR", {
+                    timeZone: "America/Sao_Paulo",
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  })
+              : "Ainda sem registros"}
           </strong>
         </div>
+        <div>
+          <span>Competência atual</span>
+          <strong className="report-period">{currentMonth}</strong>
+          <small>Mês de referência do painel</small>
+        </div>
+      </div>
+      <div className="report-dashboard-grid">
+        <section className="surface report-panel">
+          <div className="report-panel-heading">
+            <h3 id="publication-chart-title">Relatórios publicados por mês</h3>
+            <label className="report-chart-period">
+              Período
+              <select
+                value={period}
+                onChange={(e) => setPeriod(Number(e.target.value))}
+              >
+                <option value={6}>Últimos 6 meses</option>
+                <option value={12}>Últimos 12 meses</option>
+              </select>
+            </label>
+          </div>
+          <p className="report-hint">
+            Relatórios disponíveis agrupados pela data de inclusão no sistema. A
+            competência do documento pode ser diferente.
+          </p>
+          <div className="report-chart-scroll">
+            <ul
+              className="report-month-chart"
+              aria-labelledby="publication-chart-title"
+            >
+              {months.map((m) => (
+                <li key={m.key} aria-label={`${m.key}: ${m.count} relatórios`}>
+                  <div className="report-bar-track" aria-hidden="true">
+                    <strong>{m.count}</strong>
+                    <div
+                      className={`report-month-bar ${m.key === currentMonth ? "current" : ""}`}
+                      style={{ height: `${(m.count / chartMax) * 150}px` }}
+                    />
+                  </div>
+                  <span aria-hidden="true">{m.label}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <p className="report-hint">
+            {months.reduce((n, m) => n + m.count, 0)} relatórios no período ·
+            Mês atual em andamento
+          </p>
+          {months.every((m) => m.count === 0) && (
+            <p className="report-empty-inline">
+              Nenhum relatório publicado neste período.
+            </p>
+          )}
+        </section>
+        <section className="surface report-panel report-attention">
+          <div className="report-panel-heading">
+            <h3>Precisa da sua atenção</h3>
+            <span
+              className={`report-badge ${attention.length ? "pending" : "new"}`}
+            >
+              {attention.length} relatórios
+            </span>
+          </div>
+          <p className="report-hint">
+            {pending} documentos pendentes · {unresolved} dúvidas sem solução
+          </p>
+          {attention.length === 0 ? (
+            <p className="report-empty-inline">
+              Tudo em dia. Nenhuma pendência registrada.
+            </p>
+          ) : (
+            <ul className="report-attention-list">
+              {attention.slice(0, 3).map((s) => (
+                <li key={s.report.id}>
+                  <button
+                    onClick={() => {
+                      setError("");
+                      setSelected(s.report.id);
+                    }}
+                  >
+                    <strong>{s.report.name}</strong>
+                    <span>
+                      {s.pendingDocuments} documentos · {s.unresolved} dúvidas
+                      {s.report.status && s.report.status !== "completed"
+                        ? ` · ${statusLabel[s.report.status] ?? s.report.status}`
+                        : ""}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="report-dashboard-links">
+            <a
+              href="#report-library"
+              onClick={() => {
+                setQuery("");
+                setFilter("pending");
+              }}
+            >
+              Ver todas as pendências →
+            </a>
+            <a
+              href="#report-library"
+              onClick={() => {
+                setQuery("");
+                setFilter("changes");
+              }}
+            >
+              {changed.length} relatórios com novidades →
+            </a>
+          </div>
+          <p className="report-hint">
+            {received} documentos já recebidos e registrados no acompanhamento.
+          </p>
+        </section>
       </div>
       {error && (
         <p role="alert" className="report-error">
           {error}
         </p>
       )}
-      <div className="report-filter">
+      <div className="report-filter" id="report-library">
         <label htmlFor="report-search">Buscar</label>
         <input
           id="report-search"

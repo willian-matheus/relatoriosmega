@@ -65,7 +65,7 @@ const navigation = [
 const empty: WorkspaceData = { opportunities: [], reports: [], activities: [] };
 
 export function Workspace() {
-  const [view, setView] = useState<View>("pipeline");
+  const [view, setView] = useState<View>("reports");
   const [data, setData] = useState<WorkspaceData>(empty);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -600,7 +600,7 @@ export function Workspace() {
                   : view === "overview"
                     ? "Uma visão clara do que está acontecendo no seu comercial."
                     : view === "reports"
-                      ? "Transforme seus relatórios em novas oportunidades."
+                      ? "Veja o que chegou, o que mudou e o que precisa da sua atenção."
                       : view === "history"
                         ? "Consulte relatórios e tarefas resgatados automaticamente do Gestta e salvos no Google Drive."
                         : view === "integrations"

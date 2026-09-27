@@ -488,14 +488,26 @@ export async function getGesttaTaskDetail(taskId: string): Promise<any> {
  * Lista relatórios do Gestta
  */
 export async function getGesttaReports(): Promise<GesttaReportItem[]> {
-  const token = await getValidGesttaToken();
-  const res = await fetch(`${BASE_URL}/report`, {
+  let token = await getValidGesttaToken();
+  let res = await fetch(`${BASE_URL}/report`, {
     headers: {
       Authorization: token,
       Origin: "https://app.gestta.com.br",
       Referer: "https://app.gestta.com.br/",
     },
   });
+
+  if (!res.ok && res.status === 401) {
+    const auth = await authenticateGestta();
+    token = auth.token;
+    res = await fetch(`${BASE_URL}/report`, {
+      headers: {
+        Authorization: token,
+        Origin: "https://app.gestta.com.br",
+        Referer: "https://app.gestta.com.br/",
+      },
+    });
+  }
 
   if (!res.ok) {
     throw new Error(`Erro ao listar relatórios do Gestta (${res.status})`);
@@ -507,6 +519,60 @@ export async function getGesttaReports(): Promise<GesttaReportItem[]> {
     name: r.name,
     type: r.type,
   }));
+}
+
+/**
+ * Consulta documentos vinculados a uma tarefa ou cliente no Gestta
+ */
+export async function getGesttaTaskDocuments(taskId: string): Promise<any[]> {
+  try {
+    const token = await getValidGesttaToken();
+    const res = await fetch(`${BASE_URL}/customer/task/${taskId}/document`, {
+      headers: {
+        Authorization: token,
+        Origin: "https://app.gestta.com.br",
+        Referer: "https://app.gestta.com.br/",
+      },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : data.docs || [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Baixa um arquivo contábil/anexo do Gestta (PDF, XML ou similar)
+ */
+export async function downloadGesttaDocumentFile(
+  documentId: string,
+): Promise<{ buffer: Buffer; filename: string; contentType: string } | null> {
+  try {
+    const token = await getValidGesttaToken();
+    const url = `https://api.gestta.com.br/accounting/file/${documentId}/download`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: token,
+        Origin: "https://app.gestta.com.br",
+        Referer: "https://app.gestta.com.br/",
+      },
+    });
+    if (!res.ok) return null;
+    const arrayBuf = await res.arrayBuffer();
+    const contentType = res.headers.get("content-type") || "application/pdf";
+    const disposition = res.headers.get("content-disposition") || "";
+    let filename = `documento_${documentId}.pdf`;
+    const m = disposition.match(/filename=["']?([^"';]+)["']?/);
+    if (m && m[1]) filename = m[1];
+    return {
+      buffer: Buffer.from(arrayBuf),
+      filename,
+      contentType,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

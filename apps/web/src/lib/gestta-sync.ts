@@ -3,9 +3,16 @@ import { getOptionalSupabaseServerClient } from "./supabase-server";
 import {
   getGesttaTasks,
   getGesttaReports,
+  getGesttaTaskDocuments,
+  downloadGesttaDocumentFile,
   GesttaTask,
   GesttaReportItem,
 } from "./gestta";
+import {
+  generateTaskPdfReport,
+  generateCompetencePdfReport,
+  generateGeneralSyncSummaryPdf,
+} from "./gestta-pdf";
 import {
   getAuthenticatedDriveClient,
   findOrCreateFolder,
@@ -26,12 +33,16 @@ export interface SyncTaskResult {
   status: string;
   driveFolderId?: string;
   fileLink?: string;
+  pdfFileLink?: string;
+  jsonFileLink?: string;
+  attachedDocsCount?: number;
 }
 
 export interface SyncCompetenceResult {
   competence: string;
   tasks: SyncTaskResult[];
   csvFileLink?: string;
+  pdfFileLink?: string;
 }
 
 export interface SyncCompanyResult {
@@ -49,6 +60,7 @@ export interface SyncSummary {
   reportId?: string;
   driveRootFolderId?: string;
   driveRootUrl?: string;
+  driveGeneralPdfUrl?: string;
   gesttaReportsAvailable: GesttaReportItem[];
   companies: SyncCompanyResult[];
 }
@@ -156,28 +168,37 @@ export async function syncGesttaToCrmAndDrive(
   let driveRootUrl: string | undefined;
 
   if (driveClient?.drive) {
-    const rootName = options?.rootFolderName || "Mega Contabilidade - Gestta";
-    driveRootFolderId = await findOrCreateFolder(driveClient.drive, rootName);
-    driveRootUrl = `https://drive.google.com/drive/folders/${driveRootFolderId}`;
-    console.log(`      Pasta Raiz: "${rootName}" (ID: ${driveRootFolderId})`);
-
-    // Garante acesso público para leitura/download e editor para crmmegadev@gmail.com
     try {
-      await driveClient.drive.permissions.create({
-        fileId: driveRootFolderId,
-        requestBody: { role: "reader", type: "anyone" },
-      });
-      await driveClient.drive.permissions.create({
-        fileId: driveRootFolderId,
-        sendNotificationEmail: false,
-        requestBody: {
-          role: "writer",
-          type: "user",
-          emailAddress: "crmmegadev@gmail.com",
-        },
-      });
-    } catch {
-      // silencioso caso já exista permissão
+      const rootName = options?.rootFolderName || "Mega Contabilidade - Gestta";
+      driveRootFolderId = await findOrCreateFolder(driveClient.drive, rootName);
+      driveRootUrl = `https://drive.google.com/drive/folders/${driveRootFolderId}`;
+      console.log(`      Pasta Raiz: "${rootName}" (ID: ${driveRootFolderId})`);
+
+      // Garante acesso público para leitura/download e editor para crmmegadev@gmail.com
+      try {
+        await driveClient.drive.permissions.create({
+          fileId: driveRootFolderId,
+          requestBody: { role: "reader", type: "anyone" },
+        });
+        await driveClient.drive.permissions.create({
+          fileId: driveRootFolderId,
+          sendNotificationEmail: false,
+          requestBody: {
+            role: "writer",
+            type: "user",
+            emailAddress: "crmmegadev@gmail.com",
+          },
+        });
+      } catch {
+        // silencioso caso já exista permissão
+      }
+    } catch (driveAuthErr: any) {
+      console.warn(
+        "⚠️ Aviso: Falha ao acessar Google Drive (token precisa ser reconectado):",
+        driveAuthErr?.message || driveAuthErr,
+      );
+      driveRootFolderId = undefined;
+      driveRootUrl = undefined;
     }
   }
 
@@ -189,12 +210,17 @@ export async function syncGesttaToCrmAndDrive(
   if (supabase) {
     await supabase.from("reports").insert({
       id: reportId,
-      name: `Sincronização Gestta - Tarefas & Competências (${dateStr})`,
+      name: `Sincronização Gestta - Tarefas & Competências em PDF (${dateStr})`,
       status: "completed",
       count: tasks.length,
-      mime_type: "application/json",
+      mime_type: "application/pdf",
       metadata: {
         source: "gestta",
+        format: "PDF",
+        pdfReportsGenerated: true,
+        ofxSupported: false,
+        ofxNote:
+          "Formato OFX e exclusivo para extratos bancarios; tarefas do Gestta consolidadas em PDF.",
         totalTasks: tasks.length,
         totalCompanies: companiesMap.size,
         googleDriveFolderId: driveRootFolderId,
@@ -215,9 +241,9 @@ export async function syncGesttaToCrmAndDrive(
       value: 0,
       stage:
         t.status === "DONE"
-          ? "closed_won"
+          ? "won"
           : t.overdue
-            ? "lead"
+            ? "contact"
             : "proposal",
       owner: "Gestta Automático",
       priority: t.overdue ? "high" : "medium",
@@ -226,7 +252,10 @@ export async function syncGesttaToCrmAndDrive(
       notes: `Tarefa: ${t.name} | Competência: ${t.competence} | Status: ${t.status} | Prazo Legal: ${t.legalDate ? t.legalDate.slice(0, 10) : "N/A"}`,
     }));
 
-    await supabase.from("opportunities").insert(oppsToInsert);
+    const { error: oppErr } = await supabase.from("opportunities").insert(oppsToInsert);
+    if (oppErr) {
+      console.warn("Aviso ao inserir oportunidades no CRM:", oppErr.message);
+    }
 
     // Registra atividade no CRM
     await supabase.from("activities").insert({
@@ -259,6 +288,7 @@ export async function syncGesttaToCrmAndDrive(
     for (const [competence, taskList] of competencesMap.entries()) {
       let competenceFolderId: string | undefined;
       let csvFileLink: string | undefined;
+      let pdfCompLink: string | undefined;
 
       if (driveClient?.drive && companyFolderId) {
         competenceFolderId = await findOrCreateFolder(
@@ -267,7 +297,25 @@ export async function syncGesttaToCrmAndDrive(
           companyFolderId,
         );
 
-        // Gera CSV consolidado da competência
+        // 1. Gera e faz upload do Relatório Consolidado da Competência em PDF
+        try {
+          const compPdfBuffer = await generateCompetencePdfReport(
+            companyName,
+            competence,
+            taskList,
+          );
+          const compPdfUploaded = await uploadFileToFolder(driveClient.drive, {
+            fileName: `Relatorio_Competencia_${competence}.pdf`,
+            mimeType: "application/pdf",
+            content: compPdfBuffer,
+            parentId: competenceFolderId,
+          });
+          pdfCompLink = compPdfUploaded.webViewLink;
+        } catch (pdfErr) {
+          console.warn(`Aviso ao gerar PDF da competência ${competence}:`, pdfErr);
+        }
+
+        // 2. Gera CSV consolidado da competência
         const csvLines = [
           "Empresa,Código,Competência,Tarefa,Status,Vencimento,Prazo Legal,Em Atraso,ID Gestta",
           ...taskList.map(
@@ -290,6 +338,8 @@ export async function syncGesttaToCrmAndDrive(
       for (const t of taskList) {
         let taskFolderId: string | undefined;
         let fileLink: string | undefined;
+        let pdfFileLink: string | undefined;
+        let attachedDocsCount = 0;
 
         if (driveClient?.drive && competenceFolderId) {
           const safeTaskFolder = sanitizeFolderName(t.name);
@@ -299,7 +349,22 @@ export async function syncGesttaToCrmAndDrive(
             competenceFolderId,
           );
 
-          // Upload do Relatório Formatado da Tarefa (.txt)
+          // 1. Upload do Relatório Formatado da Tarefa em PDF
+          let pdfUploadedFile: { id: string; name: string; webViewLink?: string } | undefined;
+          try {
+            const taskPdfBuffer = await generateTaskPdfReport(t, reportsList);
+            pdfUploadedFile = await uploadFileToFolder(driveClient.drive, {
+              fileName: "Relatorio_Tarefa_Gestta.pdf",
+              mimeType: "application/pdf",
+              content: taskPdfBuffer,
+              parentId: taskFolderId,
+            });
+            pdfFileLink = pdfUploadedFile.webViewLink;
+          } catch (pdfErr) {
+            console.warn(`Aviso ao gerar PDF para tarefa ${t.id}:`, pdfErr);
+          }
+
+          // 2. Upload do Relatório Formatado da Tarefa (.txt)
           const reportContent = formatTaskReportText(t, reportsList);
           const txtFile = await uploadFileToFolder(driveClient.drive, {
             fileName: "Relatorio_Tarefa_Gestta.txt",
@@ -308,7 +373,7 @@ export async function syncGesttaToCrmAndDrive(
             parentId: taskFolderId,
           });
 
-          // Upload dos Dados Completos da Tarefa em JSON
+          // 3. Upload dos Dados Completos da Tarefa em JSON
           const jsonFile = await uploadFileToFolder(driveClient.drive, {
             fileName: "detalhes_tarefa.json",
             mimeType: "application/json",
@@ -316,7 +381,32 @@ export async function syncGesttaToCrmAndDrive(
             parentId: taskFolderId,
           });
 
-          fileLink = txtFile.webViewLink;
+          // 4. Verifica e baixa documentos anexos no Gestta (PDFs/arquivos contábeis)
+          try {
+            const attachedDocs = await getGesttaTaskDocuments(t.id);
+            if (Array.isArray(attachedDocs) && attachedDocs.length > 0) {
+              for (const docItem of attachedDocs) {
+                const docId = docItem._id || docItem.id;
+                if (docId) {
+                  const downloadedDoc = await downloadGesttaDocumentFile(docId);
+                  if (downloadedDoc) {
+                    await uploadFileToFolder(driveClient.drive, {
+                      fileName: downloadedDoc.filename || `anexo_${docId}.pdf`,
+                      mimeType: downloadedDoc.contentType || "application/pdf",
+                      content: downloadedDoc.buffer,
+                      parentId: taskFolderId,
+                    });
+                    attachedDocsCount++;
+                  }
+                }
+              }
+            }
+          } catch (attErr) {
+            // Silencioso se não houver anexos
+          }
+
+          // Prioriza o link do PDF como link principal do arquivo
+          fileLink = pdfUploadedFile?.webViewLink || txtFile.webViewLink;
 
           // Armazena para gravação no histórico do banco
           historyRecordsToUpsert.push({
@@ -332,8 +422,10 @@ export async function syncGesttaToCrmAndDrive(
             department: t.department || null,
             overdue: Boolean(t.overdue),
             drive_folder_id: taskFolderId || null,
-            drive_file_id: txtFile.id || null,
-            drive_file_link: txtFile.webViewLink || null,
+            drive_file_id: pdfUploadedFile?.id || txtFile.id || null,
+            drive_file_link: fileLink || null,
+            drive_pdf_id: pdfUploadedFile?.id || null,
+            drive_pdf_link: pdfFileLink || null,
             drive_json_link: jsonFile.webViewLink || null,
             report_id: reportId,
             raw_data: t.raw || t,
@@ -348,6 +440,8 @@ export async function syncGesttaToCrmAndDrive(
           status: t.status,
           driveFolderId: taskFolderId,
           fileLink,
+          pdfFileLink,
+          attachedDocsCount,
         });
       }
 
@@ -355,6 +449,7 @@ export async function syncGesttaToCrmAndDrive(
         competence,
         tasks: taskResults,
         csvFileLink,
+        pdfFileLink: pdfCompLink,
       });
     }
 
@@ -382,6 +477,74 @@ export async function syncGesttaToCrmAndDrive(
     }
   }
 
+  // 6. Geração e envio do Relatório Executivo Geral em PDF
+  let generalPdfDriveLink: string | undefined;
+  try {
+    const generalPdfBuffer = await generateGeneralSyncSummaryPdf({
+      timestamp,
+      totalTasks: tasks.length,
+      totalCompanies: resultCompanies.length,
+      companies: resultCompanies,
+    });
+
+    if (driveClient?.drive && driveRootFolderId) {
+      const genPdfUploaded = await uploadFileToFolder(driveClient.drive, {
+        fileName: "Relatorio_Geral_Sincronizacao.pdf",
+        mimeType: "application/pdf",
+        content: generalPdfBuffer,
+        parentId: driveRootFolderId,
+      });
+      generalPdfDriveLink = genPdfUploaded.webViewLink;
+    }
+
+    if (supabase && reportId) {
+      // Salva arquivo no Supabase Storage se disponível
+      try {
+        const storagePath = `gestta/${reportId}/Relatorio_Geral_Sincronizacao.pdf`;
+        const { error: storageErr } = await (supabase as any).storage
+          .from("reports")
+          .upload(storagePath, generalPdfBuffer, {
+            contentType: "application/pdf",
+            upsert: true,
+          });
+
+        if (!storageErr) {
+          await (supabase as any)
+            .from("reports")
+            .update({
+              file_path: storagePath,
+              file_size: generalPdfBuffer.length,
+            })
+            .eq("id", reportId);
+        }
+      } catch (stErr) {
+        console.warn("Aviso ao salvar PDF no Supabase Storage:", stErr);
+      }
+
+      // Atualiza metadata com o link do PDF Geral
+      await (supabase as any)
+        .from("reports")
+        .update({
+          metadata: {
+            source: "gestta",
+            format: "PDF",
+            pdfReportsGenerated: true,
+            ofxSupported: false,
+            ofxNote:
+              "Formato OFX e exclusivo para extratos bancarios; relatorios consolidados em PDF.",
+            totalTasks: tasks.length,
+            totalCompanies: resultCompanies.length,
+            googleDriveFolderId: driveRootFolderId,
+            googleDriveUrl: driveRootUrl,
+            googleDriveGeneralPdfUrl: generalPdfDriveLink,
+          },
+        })
+        .eq("id", reportId);
+    }
+  } catch (genPdfErr) {
+    console.warn("Aviso ao gerar Relatorio Geral em PDF:", genPdfErr);
+  }
+
   return {
     success: true,
     timestamp,
@@ -390,6 +553,7 @@ export async function syncGesttaToCrmAndDrive(
     reportId,
     driveRootFolderId,
     driveRootUrl,
+    driveGeneralPdfUrl: generalPdfDriveLink,
     gesttaReportsAvailable: reportsList,
     companies: resultCompanies,
   };
@@ -405,6 +569,7 @@ export interface HistoryTaskItem {
   department?: string;
   overdue: boolean;
   fileLink?: string;
+  pdfLink?: string;
   jsonLink?: string;
   syncedAt?: string;
 }
@@ -505,6 +670,8 @@ export async function getGesttaHistoryGrouped(filter?: {
       compItem.competences.push(compGroup);
     }
 
+    const primaryFile = r.drive_pdf_link || r.drive_file_link;
+
     compGroup.tasks.push({
       id: r.id,
       taskId: r.gestta_task_id,
@@ -514,7 +681,8 @@ export async function getGesttaHistoryGrouped(filter?: {
       legalDate: r.legal_date,
       department: r.department,
       overdue: Boolean(r.overdue),
-      fileLink: r.drive_file_link,
+      fileLink: primaryFile,
+      pdfLink: r.drive_pdf_link || primaryFile,
       jsonLink: r.drive_json_link,
       syncedAt: r.synced_at,
     });
