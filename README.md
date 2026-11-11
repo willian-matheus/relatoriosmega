@@ -42,7 +42,8 @@ Os arquivos `.env.example` de `apps/web` e `apps/api` servem de ponto de partida
 ## O que está implementado
 
 - **Login com sessão**: tela `/login`, cookie `mega_session` assinado com HMAC-SHA256 e válido por 7 dias. O `proxy.ts` (convenção do Next.js 16, antigo `middleware.ts`) redireciona páginas sem sessão para o login e responde `401` nas rotas de API protegidas.
-- Navegação em três abas: **Relatórios** (tela inicial), **Histórico** e **Integrações**.
+- Navegação em quatro abas: **Painel** (tela inicial), **Relatórios**, **Histórico** e **Integrações**.
+- Painel com gráficos de tarefas pendentes e atrasadas, extratos não enviados pelos clientes e situação do Google Drive (ver abaixo).
 - Central de relatórios: cada sincronização do Gestta vira um relatório com suas tarefas, documentos pendentes, dúvidas, revisão e download do PDF geral.
 - Integração com o Gestta: conexão, sincronização manual e automática e histórico por empresa e competência.
 - Integração com o Google Drive via OAuth para armazenar os relatórios, PDFs e anexos gerados.
@@ -56,6 +57,18 @@ O sistema inicia vazio, sem relatórios ou atividades fictícias. Com Supabase c
 O acesso é por uma senha única da plataforma; ainda não há isolamento de dados por usuário.
 
 As tabelas `opportunities` e as colunas ligadas a elas continuam no banco (dados antigos do CRM comercial), mas não são mais lidas nem gravadas pela aplicação web.
+
+## Painel
+
+Tela inicial com a situação do escritório, montada só com o que está no Supabase (não chama o Gestta ao abrir). A rota é `GET /api/dashboard`, com os parâmetros opcionais `competencias` (padrão 6), `empresa` (código), `responsavel` e `refresh=1` (ignora o cache de 60 segundos).
+
+- **Números principais:** tarefas em aberto, atrasadas, concluídas, percentual concluído no prazo, clientes sem nenhum extrato (tarefa vencida) e extratos com cópia no Drive.
+- **Evolução por competência:** barras empilhadas com concluídas no prazo, concluídas com atraso, em aberto no prazo e atrasadas, com dica ao passar o mouse e versão em tabela. As cores passaram no validador de daltonismo contra o fundo do app.
+- **Empresas e responsáveis com mais atrasos.**
+- **Extratos não enviados pelos clientes:** por tarefa de extratos em aberto, separa "nenhum enviado" de "parcial". Tarefas concluídas pelo escritório não entram, porque itens sem arquivo ali não se aplicavam ao cliente. Itens vencidos são os de tarefa com vencimento anterior a hoje, no fuso de Brasília.
+- **Situação do Drive e dos envios:** extratos com e sem cópia, convertidos, envio ao CRM-MEGA, tarefas com PDF no Drive e as últimas sincronizações.
+
+Os dados vêm de um retrato gravado pela captura de extratos (`gestta_tasks` e `gestta_document_requests`; migração `20261111000003…`). A cada execução, a captura já percorre todas as tarefas da janela e grava esse retrato, e o Painel considera só a varredura mais recente. Competências e vencimentos são calculados no fuso de Brasília.
 
 ## Acompanhamento de relatórios
 
@@ -195,6 +208,7 @@ Rotas do Next (prefixo `/api`). Exceto as marcadas como públicas, todas exigem 
 | GET             | `/integrations/gestta/status`               | Status da conexão com o Gestta                        |
 | POST            | `/integrations/gestta/disconnect`           | Desconectar o Gestta                                  |
 | GET/POST        | `/integrations/gestta/sync`                 | Consultar / executar a sincronização Gestta → Drive   |
+| GET             | `/dashboard`                                | Painel (`competencias`, `empresa`, `responsavel`, `refresh`) |
 | GET             | `/gestta/history`                           | Histórico agrupado (`search`, `competence`, `status`) |
 | GET/POST        | `/cron/gestta-sync`                         | Iniciar agendamento / disparar sincronização (pública) |
 | GET             | `/integrations/google/connect`              | Iniciar o OAuth do Google                             |

@@ -21,6 +21,7 @@ import {
   LogOut,
   RefreshCw,
   History,
+  LayoutDashboard,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { WorkspaceSnapshot } from "@/lib/report-tasks";
@@ -28,12 +29,21 @@ import { ReportCenter } from "./report-center";
 import { GesttaSyncDialog } from "./gestta-sync-dialog";
 import { HistoryView } from "./history-view";
 import { ApiTokensPanel } from "./api-tokens-panel";
+import { DashboardView } from "./dashboard-view";
 
 /**
  * Abas do workspace, na ordem do menu. Para acrescentar uma view, inclua um
  * item aqui (o tipo `View` é derivado deste array) e renderize-a em <main>.
  */
 const navigation = [
+  {
+    id: "dashboard",
+    label: "Painel",
+    icon: LayoutDashboard,
+    title: "Painel",
+    description:
+      "Tarefas pendentes e atrasadas, extratos que os clientes ainda não enviaram e a situação do Google Drive.",
+  },
   {
     id: "reports",
     label: "Relatórios",
@@ -60,7 +70,7 @@ const navigation = [
   },
 ] as const;
 type View = (typeof navigation)[number]["id"];
-const initialView: View = "reports";
+const initialView: View = "dashboard";
 const empty: WorkspaceSnapshot = { reports: [], activities: [], tasks: [] };
 
 export function Workspace() {
@@ -569,6 +579,11 @@ export function Workspace() {
             </div>
           ) : (
             <>
+              {view === "dashboard" && (
+                <section className="dashboard-section" style={{ width: "100%" }}>
+                  <DashboardView />
+                </section>
+              )}
               {view === "reports" && (
                 <section className="reports-section">
                   <ReportCenter

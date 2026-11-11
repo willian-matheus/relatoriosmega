@@ -3125,3 +3125,13 @@ tbody tr:last-child td {
   color: #f87171;
 }
 
+
+/* Celular: os botões de status do topo mostram só o ícone e o indicador (o texto fica no título) */
+@media (max-width: 760px) {
+  .google-status-pill span:not(.online-dot):not(.dot-disconnected) {
+    display: none;
+  }
+  .google-status-pill {
+    padding-inline: 10px;
+  }
+}

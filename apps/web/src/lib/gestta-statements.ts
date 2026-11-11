@@ -14,6 +14,15 @@ import {
 import { getAuthenticatedDriveClient, findOrCreateFolder, uploadFileToFolder } from "./google";
 import { sanitizeFolderName } from "./gestta-sync";
 import { buildOfx, parsePdfStatement, PdfStatementResult } from "./pdf-to-ofx";
+import {
+  mapTaskDetailToDocumentRequests,
+  mapTaskDocToRow,
+  saveDocumentRequests,
+  saveTaskSnapshot,
+  type GesttaDocumentRequestRow,
+  type GesttaTaskRow,
+  type SnapshotWriteResult,
+} from "./dashboard/snapshot";
 
 /**
  * Captura de extratos bancários enviados pelos clientes no Gestta.
@@ -76,6 +85,26 @@ export interface StatementSyncSummary {
   };
   ignored: { fileName: string; reason: string }[];
   errors: { taskId: string; fileName?: string; message: string }[];
+  /** Retrato para o Painel (gestta_tasks / gestta_document_requests); falhas não afetam a captura */
+  snapshot: {
+    tasks: SnapshotWriteResult;
+    documentRequests: SnapshotWriteResult;
+  };
+}
+
+function emptySnapshotResult(): SnapshotWriteResult {
+  return { enabled: false, attempted: 0, written: 0, batches: 0, errors: [] };
+}
+
+/** Painel: grava o retrato sem nunca lançar (a captura de extratos não pode ser afetada). */
+async function safeSnapshotWrite(
+  write: () => Promise<SnapshotWriteResult>,
+): Promise<SnapshotWriteResult> {
+  try {
+    return await write();
+  } catch (err: any) {
+    return { ...emptySnapshotResult(), errors: [err?.message || String(err)] };
+  }
 }
 
 function isoDaysFromNow(days: number): string {
@@ -293,10 +322,12 @@ export async function syncGesttaStatements(
     conversions: { converted: 0, alreadyConverted: 0, failed: [] },
     ignored: [],
     errors: [],
+    snapshot: { tasks: emptySnapshotResult(), documentRequests: emptySnapshotResult() },
   };
 
   // 1. Varre as tarefas da janela e separa as de envio de extratos
   const statementTasks: any[] = [];
+  const snapshotRows: GesttaTaskRow[] = []; // Painel: retrato de todas as tarefas varridas
   for (let page = 1; page <= MAX_TASK_PAGES; page++) {
     const { docs, pages } = await searchGesttaTasksPage({
       startDate: start,
@@ -305,9 +336,20 @@ export async function syncGesttaStatements(
       limit: 100,
     });
     summary.tasksScanned += docs.length;
+    for (const doc of docs) {
+      try {
+        const row = mapTaskDocToRow(doc, startedAt);
+        if (row) snapshotRows.push(row);
+      } catch {
+        // documento malformado: fica fora do retrato, a captura segue
+      }
+    }
     statementTasks.push(...docs.filter((t) => STATEMENT_TASK_NAME.test(t.name || "")));
     if (!docs.length || page >= pages) break;
   }
+  // Painel: grava o retrato das tarefas ao fim da varredura (falha não interrompe a captura)
+  summary.snapshot.tasks = await safeSnapshotWrite(() => saveTaskSnapshot(snapshotRows));
+
   const selected = options.maxTasks ? statementTasks.slice(0, options.maxTasks) : statementTasks;
   summary.statementTasks = selected.length;
 
@@ -328,6 +370,9 @@ export async function syncGesttaStatements(
     }
   };
 
+  // Painel: itens de solicitação de documentos, gravados de uma vez ao fim da etapa 2
+  const documentRequestRows: GesttaDocumentRequestRow[] = [];
+
   // 2. Para cada tarefa, lê os arquivos enviados e captura os extratos novos
   await mapWithConcurrency(selected, DETAIL_CONCURRENCY, async (listed) => {
     let task: any;
@@ -336,6 +381,12 @@ export async function syncGesttaStatements(
     } catch (err: any) {
       summary.errors.push({ taskId: listed._id, message: err?.message || String(err) });
       return;
+    }
+
+    try {
+      documentRequestRows.push(...mapTaskDetailToDocumentRequests(task, listed, startedAt));
+    } catch {
+      // detalhe malformado: fica fora do painel, a captura segue
     }
 
     const customer = task.customer || listed.customer || {};
@@ -440,6 +491,11 @@ export async function syncGesttaStatements(
     if (!clientSentOfx && checkingPdfs.length) {
       await convertCheckingPdfs(checkingPdfs, summary, copyToDrive);
     }
+  }).finally(async () => {
+    // Painel: grava os itens coletados (também se a etapa 2 for interrompida)
+    summary.snapshot.documentRequests = await safeSnapshotWrite(() =>
+      saveDocumentRequests(documentRequestRows),
+    );
   });
 
   summary.finishedAt = new Date().toISOString();
