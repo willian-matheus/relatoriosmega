@@ -1,4 +1,6 @@
 import { syncGesttaToCrmAndDrive } from "./gestta-sync";
+import { syncGesttaStatements } from "./gestta-statements";
+import { deliverStatements } from "./statement-delivery";
 import { getOptionalSupabaseServerClient } from "./supabase-server";
 
 export interface GesttaCronStatus {
@@ -99,6 +101,29 @@ export async function runGesttaSyncCycle(triggerReason = "cron_10m"): Promise<{
     console.log(`\n======================================================`);
     console.log(`[Gestta Cron] Iniciando verificação a cada 10 min (${triggerReason}) em ${startedAt}...`);
     console.log(`======================================================`);
+
+    // Extratos enviados pelos clientes (independe do resultado da sincronização principal)
+    try {
+      const statements = await syncGesttaStatements();
+      console.log(
+        `[Gestta Cron] Extratos: ${statements.saved} novos (${statements.savedOfx} OFX, ${statements.savedPdf} PDF), ` +
+          `${statements.alreadyCaptured} já capturados, ${statements.errors.length} erros.`,
+      );
+    } catch (stmtErr: any) {
+      console.warn("[Gestta Cron] Falha na captura de extratos:", stmtErr?.message || stmtErr);
+    }
+
+    // Envio automático para a plataforma de destino: só quando ligado explicitamente
+    if (process.env.EXTRATOS_ENVIO_AUTOMATICO === "true") {
+      try {
+        const delivery = await deliverStatements({ limit: 50 });
+        console.log(
+          `[Gestta Cron] Envio de extratos: ${delivery.sent} enviados, ${delivery.failed} com erro, ${delivery.skipped} não enviados (duplicariam).`,
+        );
+      } catch (deliveryErr: any) {
+        console.warn("[Gestta Cron] Falha no envio de extratos:", deliveryErr?.message || deliveryErr);
+      }
+    }
 
     const result = await syncGesttaToCrmAndDrive({
       rootFolderName: "Mega Contabilidade - Gestta",

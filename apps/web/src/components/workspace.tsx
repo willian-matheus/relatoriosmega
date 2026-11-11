@@ -52,6 +52,7 @@ import { ReportCenter } from "./report-center";
 import { GesttaImportDialog } from "./gestta-import-dialog";
 import { GesttaSyncDialog } from "./gestta-sync-dialog";
 import { HistoryView } from "./history-view";
+import { ApiTokensPanel } from "./api-tokens-panel";
 
 type View = "overview" | "pipeline" | "reports" | "history" | "contacts" | "integrations";
 const navigation = [
@@ -1788,6 +1789,10 @@ export function Workspace() {
                     </div>
                   )}
                   </section>
+
+                  <ApiTokensPanel
+                    onMessage={(text, error) => setToast({ text, error })}
+                  />
                 </div>
               )}
               {view === "history" && (

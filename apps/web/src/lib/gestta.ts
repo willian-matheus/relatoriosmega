@@ -559,8 +559,19 @@ export async function downloadGesttaDocumentFile(
       },
     });
     if (!res.ok) return null;
+
+    // O Gestta responde com JSON { url } apontando para um link temporário (S3),
+    // e não com o arquivo em si.
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const data = await res.json().catch(() => null);
+      if (!data?.url) return null;
+      const file = await fetchSignedFile(data.url);
+      if (!file) return null;
+      return { ...file, filename: file.filename || `documento_${documentId}.pdf` };
+    }
+
     const arrayBuf = await res.arrayBuffer();
-    const contentType = res.headers.get("content-type") || "application/pdf";
     const disposition = res.headers.get("content-disposition") || "";
     let filename = `documento_${documentId}.pdf`;
     const m = disposition.match(/filename=["']?([^"';]+)["']?/);
@@ -568,11 +579,135 @@ export async function downloadGesttaDocumentFile(
     return {
       buffer: Buffer.from(arrayBuf),
       filename,
-      contentType,
+      contentType: contentType || "application/pdf",
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Baixa o arquivo de um link temporário (S3) devolvido pela API do Gestta.
+ */
+async function fetchSignedFile(
+  url: string,
+): Promise<{ buffer: Buffer; filename: string; contentType: string } | null> {
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  let filename = "";
+  try {
+    filename = decodeURIComponent(new URL(url).pathname.split("/").pop() || "");
+  } catch {
+    // nome fica vazio; quem chama define um padrão
+  }
+  return {
+    buffer: Buffer.from(await res.arrayBuffer()),
+    filename,
+    contentType: res.headers.get("content-type") || "application/octet-stream",
+  };
+}
+
+/**
+ * Requisição autenticada à API do Gestta, com uma nova autenticação em caso de 401.
+ */
+async function gesttaRequest(url: string, init: RequestInit = {}): Promise<Response> {
+  const send = (token: string) =>
+    fetch(url, {
+      ...init,
+      headers: {
+        Authorization: token,
+        Origin: "https://app.gestta.com.br",
+        Referer: "https://app.gestta.com.br/",
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...init.headers,
+      },
+    });
+  let res = await send(await getValidGesttaToken());
+  if (res.status === 401) {
+    const auth = await authenticateGestta();
+    res = await send(auth.token);
+  }
+  return res;
+}
+
+/**
+ * Busca uma página de tarefas de TODOS os responsáveis (sem o filtro `no_owner`,
+ * que restringe a busca às tarefas sem responsável).
+ */
+export async function searchGesttaTasksPage(options: {
+  startDate: string;
+  endDate: string;
+  dateType?: "DUE_DATE" | "LEGAL_DATE" | "COMPETENCE_DATE";
+  page: number;
+  limit?: number;
+}): Promise<{ docs: any[]; pages: number; total: number }> {
+  const res = await gesttaRequest(`${BASE_URL}/customer/task/search`, {
+    method: "POST",
+    body: JSON.stringify({
+      date_type: options.dateType || "DUE_DATE",
+      start_date: options.startDate,
+      end_date: options.endDate,
+      limit: options.limit || 100,
+      page: options.page,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Erro ao buscar tarefas no Gestta (${res.status}): ${await res.text()}`);
+  }
+  const data = await res.json();
+  const docs = data.docs || (Array.isArray(data) ? data : []);
+  return { docs, pages: Number(data.pages) || 1, total: Number(data.total) || docs.length };
+}
+
+/**
+ * Detalhe da tarefa, incluindo `document_request.requested_documents[].files[]`
+ * (arquivos enviados pelo cliente na solicitação de documentos).
+ */
+export async function getGesttaTaskDetailWithRetry(taskId: string): Promise<any> {
+  const res = await gesttaRequest(`${BASE_URL}/customer/task/${taskId}`);
+  if (!res.ok) {
+    throw new Error(`Erro ao obter detalhes da tarefa ${taskId} (${res.status})`);
+  }
+  return res.json();
+}
+
+/**
+ * Baixa um arquivo enviado pelo cliente numa solicitação de documentos da tarefa.
+ * A API devolve um link temporário do S3, que é então baixado.
+ */
+export async function downloadGesttaRequestedFile(params: {
+  customerTaskId: string;
+  requestedDocumentId: string;
+  customerId: string;
+  fileId: string;
+}): Promise<{ buffer: Buffer; contentType: string } | null> {
+  const res = await gesttaRequest("https://api.gestta.com.br/accounting/pendency/document/download", {
+    method: "POST",
+    body: JSON.stringify({
+      customer_task: params.customerTaskId,
+      document: params.requestedDocumentId,
+      customer: params.customerId,
+      file: params.fileId,
+    }),
+  });
+  if (!res.ok) return null;
+
+  const text = (await res.text()).trim();
+  let url = "";
+  if (/^https?:\/\//.test(text)) {
+    url = text;
+  } else {
+    try {
+      const parsed = JSON.parse(text);
+      url = typeof parsed === "string" ? parsed : parsed?.url || "";
+    } catch {
+      return null;
+    }
+  }
+  if (!url) return null;
+
+  const file = await fetchSignedFile(url);
+  return file ? { buffer: file.buffer, contentType: file.contentType } : null;
 }
 
 /**

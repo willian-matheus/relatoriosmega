@@ -33,6 +33,7 @@ As rotas de `apps/web/src/app/api` atendem o CRM diretamente. Caminhos `/api/*` 
 | `GOOGLE_CLIENT_ID`          | web      | OAuth do Google Drive.                                                     |
 | `GOOGLE_CLIENT_SECRET`      | web      | OAuth do Google Drive.                                                     |
 | `GOOGLE_REDIRECT_URI`       | web      | Callback OAuth; padrão `…/api/integrations/google/callback` da produção.   |
+| `GOOGLE_DRIVE_STATEMENTS_FOLDER` | web | Pasta raiz (privada) dos extratos no Drive; padrão `Mega Contabilidade - Extratos`. |
 | `API_URL`                   | web      | Destino do encaminhamento para o Nest; padrão `http://127.0.0.1:3001`.     |
 | `PORT`, `WEB_ORIGIN`        | api      | Porta e origem permitida (CORS) da API Nest.                               |
 
@@ -93,6 +94,70 @@ Sem o Google Drive conectado, a sincronização ainda registra os dados no CRM, 
 ## Integração com o Google Drive
 
 Em **Integrações**, conecte uma conta Google via OAuth. Os tokens ficam na tabela de integrações do Supabase. Há rotas para verificar o status, testar o acesso e desconectar.
+
+## API de extratos (OFX e PDF) para outras plataformas
+
+Plataformas externas buscam os extratos bancários anexados às tarefas do Gestta usando um **token de API** emitido pelo CRM.
+
+**Captura** (`apps/web/src/lib/gestta-statements.ts`): no Gestta, os clientes enviam os extratos nas tarefas **"Envio de Extratos Bancários e Documentos Contábeis"**, pela solicitação de documentos da tarefa. A captura:
+
+1. varre as tarefas de **todos os responsáveis** com vencimento entre 90 dias atrás e 45 dias à frente;
+2. em cada tarefa de extratos, lê os itens da solicitação que começam com "Extratos" (conta corrente, aplicações, empréstimos, cotas de capital) e ignora "Demais Documentos" e itens desconsiderados;
+3. baixa cada arquivo novo (`POST accounting/pendency/document/download`, que devolve um link temporário do S3);
+4. guarda OFX (identificado pelo conteúdo, `OFXHEADER`/`<OFX>`) e PDF; outros formatos (rar, zip, xlsx, imagens) são ignorados e listados no resumo;
+5. completa o CNPJ/CPF pela listagem de clientes, já que a tarefa não traz esse dado;
+6. com o Google Drive conectado, envia uma cópia para `Mega Contabilidade - Extratos / Empresa / Competência AAAA-MM / arquivo [id].ofx|pdf`. O sufixo `[id]` evita que dois arquivos com o mesmo nome se sobrescrevam. Extratos capturados enquanto o Drive estava desconectado são enviados na próxima execução. Essa raiz é **separada e privada**, porque a pasta "Mega Contabilidade - Gestta" da sincronização é compartilhada com qualquer pessoa com o link. O nome pode ser trocado com `GOOGLE_DRIVE_STATEMENTS_FOLDER`.
+
+**Conversão de PDF para OFX** (`apps/web/src/lib/pdf-to-ofx.ts`): quando o cliente envia **somente PDF** no item "Extratos de Conta Corrente" de uma tarefa (nenhum OFX), o sistema gera o OFX a partir do PDF:
+
+- lê as linhas do PDF e interpreta os layouts mais comuns: Banco do Brasil (dois modelos), Bradesco, Ailos/Viacredi, PagSeguro e Mercado Pago;
+- **só gera o OFX quando os lançamentos lidos fecham com os saldos impressos no PDF**; se não fecharem, nada é gerado e o motivo fica no resumo (`conversions.failed`);
+- PDFs escaneados (imagem, sem texto), relatórios de vendas, demonstrativos de aplicação e PDFs só com saldos não são convertidos;
+- o arquivo gerado se chama `<nome do PDF> (arquivo convertido do PDF).ofx`, recebe no Drive a descrição "Arquivo convertido automaticamente do PDF …" e aparece na API com `convertido: true`, `convertidoDe` (id do PDF) e `observacao`.
+
+Ela roda a cada ciclo do agendamento (`/api/cron/gestta-sync`) e sob demanda em `POST /api/integrations/gestta/statements/sync` (corpo opcional: `startDate`, `endDate`, `maxTasks`). Os arquivos vão para o bucket privado `statements` e os metadados para `gestta_statement_files`. A chave é o id do arquivo no Gestta, então rodar de novo não duplica. As migrações `20261110000000…` e `20261110000001…` criam tabelas e bucket **sem políticas para anon**, então a funcionalidade exige `SUPABASE_SERVICE_ROLE_KEY`.
+
+**Tokens**: em **Integrações → Tokens de API**, informe o nome da plataforma e a validade e clique em **Gerar token**. O token (`mega_…`) é exibido **uma única vez**; o banco guarda só o hash SHA-256. A lista mostra status, expiração e último uso, e a revogação vale imediatamente.
+
+**Uso pela plataforma** (`Authorization: Bearer <token>` ou `X-API-Key: <token>`):
+
+```sh
+# Listar (filtros opcionais)
+curl -H "Authorization: Bearer mega_..." \
+  "https://<dominio>/api/public/v1/extratos?formato=ofx&competencia=2026-10&cnpj=12345678000190&desde=2026-11-01T00:00:00Z&pagina=1&limite=50"
+
+# Baixar o arquivo (downloadUrl de cada item da listagem)
+curl -H "Authorization: Bearer mega_..." -OJ "https://<dominio>/api/public/v1/extratos/<id>/download"
+```
+
+| Parâmetro     | Formato                                            |
+| ------------- | -------------------------------------------------- |
+| `formato`     | `ofx` ou `pdf`                                     |
+| `competencia` | `AAAA-MM`                                          |
+| `cnpj`        | 14 dígitos (ou 11 para CPF), com ou sem máscara    |
+| `desde`       | Data ISO 8601; retorna o que foi sincronizado a partir dela (útil para busca incremental) |
+| `pagina`, `limite` | Inteiros; `limite` entre 1 e 200 (padrão 50)  |
+
+A resposta traz `dados` (id, formato, nomeArquivo, contentType, tamanho, sha256, competencia, tipoDocumento, empresa, tarefa, enviadoEm, sincronizadoEm, downloadUrl) e `paginacao`. O download devolve o arquivo com `Content-Disposition` e o cabeçalho `X-Content-SHA256`. Erros: `401` para token ausente, inválido, expirado ou revogado; `403` para escopo insuficiente; `400` para parâmetros inválidos; `404` para extrato inexistente.
+
+## Envio de extratos para o CRM-MEGA
+
+Além da API de consulta, o CRM pode **enviar** os extratos para uma plataforma que recebe arquivos, como o CRM-MEGA (`POST /api/extratos`, multipart com arquivo, CNPJ, código e nome da empresa e competência, autenticado por `Authorization: Bearer <token>`). O token é gerado em **Integrações → Tokens de API** e cadastrado no destino em "Tokens de outras plataformas".
+
+Como o destino não evita duplicidade, cada envio passa por uma deduplicação (`apps/web/src/lib/delivery/dedupe.ts`):
+
+- **"mesmo extrato"** significa mesma empresa, mesma competência e mesma conta (quando a conta é conhecida dos dois lados), com pelo menos 50% dos lançamentos iguais (data e valor com sinal). Contas diferentes nunca são o mesmo extrato;
+- **OFX e PDF do mesmo extrato:** vai só um, nesta ordem de preferência: OFX do cliente, OFX convertido, PDF;
+- **arquivo idêntico** enviado mais de uma vez pelo cliente: vai uma vez;
+- **o destino já tem** (veio por outro caminho, como o SCI Web): não vai. A consulta é feita no banco do destino com um usuário somente leitura (`EXTRATOS_DATABASE_URL`). Sem essa variável, o envio fica bloqueado;
+- **na dúvida** (ex.: PDF ilegível sem conta identificada num grupo que já tem OFX), não envia;
+- empresa que o destino não reconhece fica **aguardando**, sem ser descartada, até ser cadastrada lá;
+- cada arquivo é enviado **uma única vez**, com reserva antes do envio para que execuções simultâneas não mandem duas vezes. O resultado (id do extrato criado ou o erro) fica em `gestta_statement_files.delivery_*`, e os erros são tentados de novo até 3 vezes. Se a resposta se perder depois de o destino gravar, a nova tentativa detecta que o destino já tem o extrato e não reenvia;
+- a conta e os lançamentos de cada arquivo ficam guardados em `fingerprint`, para as execuções seguintes não precisarem baixar e reler os arquivos. A análise anda em lotes de empresa e competência e para quando atinge o limite de envios.
+
+Os testes (`npm test`) cobrem as regras, a identificação da empresa no destino e o fluxo completo com armazenamento, destino e servidor simulados, incluindo falhas de rede, reenvio, limite e execuções simultâneas.
+
+Configuração: `EXTRATOS_DESTINO_URL` (endereço do destino), `EXTRATOS_DESTINO_TOKEN` (o token cadastrado lá) e `EXTRATOS_ENVIO_AUTOMATICO` (`true` para enviar a cada ciclo do agendamento; o padrão é desligado). O envio manual fica em `POST /api/integrations/extratos/envio`, com corpo opcional `limit`, `ids` e `dryRun` (este último só mostra o que seria enviado).
 
 ## CSV inicial
 
@@ -163,5 +228,10 @@ Rotas do Next (prefixo `/api`). Exceto as marcadas como públicas, todas exigem 
 | POST            | `/integrations/google/test`                 | Testar o acesso ao Drive                              |
 | POST            | `/integrations/google/disconnect`           | Desconectar o Google Drive                            |
 | GET             | `/integrations/google/callback`             | Retorno do OAuth (pública)                            |
+| GET/POST        | `/api-tokens`                               | Listar / gerar tokens de API                          |
+| DELETE          | `/api-tokens/:id`                           | Revogar token de API                                  |
+| POST            | `/integrations/gestta/statements/sync`      | Capturar extratos enviados no Gestta                  |
+| GET             | `/public/v1/extratos`                       | Listar extratos OFX/PDF (token de API)                |
+| GET             | `/public/v1/extratos/:id/download`          | Baixar extrato (token de API)                         |
 
 As rotas `/google/*` são aliases antigos das rotas `/integrations/google/*`. A API Nest local expõe ainda `GET /health` e o mesmo conjunto de rotas do CRM.

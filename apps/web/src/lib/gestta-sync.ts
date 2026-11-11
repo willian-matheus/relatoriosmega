@@ -65,7 +65,7 @@ export interface SyncSummary {
   companies: SyncCompanyResult[];
 }
 
-function sanitizeFolderName(name: string): string {
+export function sanitizeFolderName(name: string): string {
   return name
     .replace(/[<>:"/\\|?*]/g, " ")
     .replace(/\s+/g, " ")
@@ -218,9 +218,9 @@ export async function syncGesttaToCrmAndDrive(
         source: "gestta",
         format: "PDF",
         pdfReportsGenerated: true,
-        ofxSupported: false,
-        ofxNote:
-          "Formato OFX e exclusivo para extratos bancarios; tarefas do Gestta consolidadas em PDF.",
+        statementsApi: true,
+        statementsNote:
+          "Extratos OFX/PDF enviados nas tarefas de extratos sao disponibilizados em /api/public/v1/extratos.",
         totalTasks: tasks.length,
         totalCompanies: companiesMap.size,
         googleDriveFolderId: driveRootFolderId,
@@ -529,9 +529,9 @@ export async function syncGesttaToCrmAndDrive(
             source: "gestta",
             format: "PDF",
             pdfReportsGenerated: true,
-            ofxSupported: false,
-            ofxNote:
-              "Formato OFX e exclusivo para extratos bancarios; relatorios consolidados em PDF.",
+            statementsApi: true,
+            statementsNote:
+              "Extratos OFX/PDF enviados nas tarefas de extratos sao disponibilizados em /api/public/v1/extratos.",
             totalTasks: tasks.length,
             totalCompanies: resultCompanies.length,
             googleDriveFolderId: driveRootFolderId,
