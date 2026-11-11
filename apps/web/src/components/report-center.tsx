@@ -1,7 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
 import {
-  Opportunity,
   Report,
   ReportAction,
   recordChange,
@@ -11,16 +10,33 @@ import {
   ArrowLeft,
   ArrowDownToLine,
   Check,
+  ExternalLink,
   FileText,
+  FolderSync,
   MessageCircle,
   Plus,
   RefreshCw,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { money } from "@/lib/format";
+import {
+  ReportTask,
+  ReportTaskState,
+  reportTaskLabel,
+  reportTaskState,
+  reportTaskStateLabel,
+} from "@/lib/report-tasks";
 import "./report-center.css";
 
 const date = (value: string) => new Date(value).toLocaleString("pt-BR");
+const day = (value: string | null) =>
+  value
+    ? new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR")
+    : "—";
+const taskBadge: Record<ReportTaskState, string> = {
+  done: "new",
+  overdue: "pending",
+  open: "changed",
+};
 const calendarMonth = (value: string | Date) =>
   new Intl.DateTimeFormat("pt-BR", {
     month: "2-digit",
@@ -40,20 +56,18 @@ const statusLabel: Record<string, string> = {
 
 export function ReportCenter({
   reports,
-  opportunities,
-  onImport,
+  tasks,
+  onSync,
   onDownload,
   onRefresh,
   onUpdated,
-  onOpenRecord,
 }: {
   reports: Report[];
-  opportunities: Opportunity[];
-  onImport: () => void;
+  tasks: ReportTask[];
+  onSync: () => void;
   onDownload: (id: string) => void;
   onRefresh: () => Promise<void>;
   onUpdated: (report: Report) => void;
-  onOpenRecord: (record: Opportunity) => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
@@ -86,7 +100,7 @@ export function ReportCenter({
   const chartMax = Math.max(1, ...months.map((m) => m.count));
   const summaries = reports.map((report) => ({
     report,
-    ...reportSummary(report, opportunities),
+    ...reportSummary(report, tasks),
   }));
   const pending = summaries.reduce((n, s) => n + s.pendingDocuments, 0);
   const unresolved = summaries.reduce((n, s) => n + s.unresolved, 0);
@@ -124,14 +138,13 @@ export function ReportCenter({
       <ReportDetails
         key={selectedReport.id}
         report={selectedReport}
-        opportunities={opportunities}
+        tasks={tasks}
         onBack={() => setSelected(null)}
         onUpdated={onUpdated}
         onDownload={onDownload}
         onRefresh={refresh}
         refreshing={refreshing}
         refreshError={error}
-        onOpenRecord={onOpenRecord}
       />
     );
   const visible = summaries.filter(
@@ -160,8 +173,8 @@ export function ReportCenter({
             <RefreshCw size={16} className={refreshing ? "spinner" : ""} />{" "}
             Atualizar
           </button>
-          <button className="primary-button" onClick={onImport}>
-            <Plus size={16} /> Importar relatório
+          <button className="primary-button" onClick={onSync}>
+            <FolderSync size={16} /> Sincronizar Gestta
           </button>
         </div>
       </div>
@@ -346,7 +359,7 @@ export function ReportCenter({
           <p>
             {reports.length
               ? "Ajuste a busca ou o filtro para encontrar seu relatório."
-              : "Importe seu primeiro CSV para acompanhar documentos, registros e dúvidas."}
+              : "Sincronize o Gestta com o Google Drive para acompanhar tarefas, documentos e dúvidas de cada relatório."}
           </p>
         </div>
       ) : (
@@ -369,18 +382,20 @@ export function ReportCenter({
                 </span>
               </div>
               <p>
-                {s.records.length} registros · Atualizado em{" "}
-                {date(s.lastUpdated)}
+                {s.records.length} tarefas
+                {s.records.length > 0 &&
+                  ` (${s.records.filter((t) => reportTaskState(t) === "done").length} concluídas, ${s.records.filter((t) => reportTaskState(t) === "overdue").length} atrasadas)`}{" "}
+                · Atualizado em {date(s.lastUpdated)}
               </p>
               <div className="report-badges">
                 {s.newRecords > 0 && (
                   <span className="report-badge new">
-                    {s.newRecords} novos registros
+                    {s.newRecords} novas tarefas
                   </span>
                 )}
                 {s.changedRecords > 0 && (
                   <span className="report-badge changed">
-                    {s.changedRecords} registros alterados
+                    {s.changedRecords} tarefas alteradas
                   </span>
                 )}
                 {s.changes.length > 0 && (
@@ -410,24 +425,22 @@ export function ReportCenter({
 
 function ReportDetails({
   report,
-  opportunities,
+  tasks,
   onBack,
   onUpdated,
   onDownload,
   onRefresh,
   refreshing,
   refreshError,
-  onOpenRecord,
 }: {
   report: Report;
-  opportunities: Opportunity[];
+  tasks: ReportTask[];
   onBack: () => void;
   onUpdated: (report: Report) => void;
   onDownload: (id: string) => void;
   onRefresh: () => Promise<void>;
   refreshing: boolean;
   refreshError: string;
-  onOpenRecord: (record: Opportunity) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
@@ -440,8 +453,17 @@ function ReportDetails({
   const [recordId, setRecordId] = useState("");
   const [replies, setReplies] = useState<Record<string, string>>({});
   const [onlyOpen, setOnlyOpen] = useState(false);
-  const summary = reportSummary(report, opportunities);
+  const [taskQuery, setTaskQuery] = useState("");
+  const [taskState, setTaskState] = useState<"all" | ReportTaskState>("all");
+  const summary = reportSummary(report, tasks);
   const { workflow, records } = summary;
+  const visibleTasks = records.filter(
+    (t) =>
+      (taskState === "all" || reportTaskState(t) === taskState) &&
+      `${t.company} ${t.companyCode ?? ""} ${t.taskName} ${t.competence ?? ""}`
+        .toLocaleLowerCase("pt-BR")
+        .includes(taskQuery.trim().toLocaleLowerCase("pt-BR")),
+  );
   async function act(action: ReportAction): Promise<boolean> {
     if (lock.current) return false;
     lock.current = true;
@@ -491,7 +513,7 @@ function ReportDetails({
               className="secondary-button"
               onClick={() => onDownload(report.id)}
             >
-              <ArrowDownToLine size={16} /> Arquivo original
+              <ArrowDownToLine size={16} /> Arquivo do relatório
             </button>
           )}
         </div>
@@ -516,9 +538,11 @@ function ReportDetails({
             Os itens sem solução continuam destacados.
           </p>
           <div className="report-badges">
-            <span className="report-badge new">{summary.newRecords} novos</span>
+            <span className="report-badge new">
+              {summary.newRecords} tarefas novas
+            </span>
             <span className="report-badge changed">
-              {summary.changedRecords} alterados
+              {summary.changedRecords} tarefas alteradas
             </span>
             <span className="report-badge pending">
               {summary.pendingDocuments + summary.unresolved} pendências
@@ -679,62 +703,128 @@ function ReportDetails({
       </div>
       <section className="surface report-panel">
         <div className="report-panel-heading">
-          <h3>Registros do relatório</h3>
+          <h3>Tarefas do Gestta</h3>
           <span className="report-badge">{records.length}</span>
         </div>
         {records.length === 0 ? (
           <p className="report-empty-inline">
-            Nenhum registro vinculado a este relatório.
+            Nenhuma tarefa do Gestta vinculada a este relatório. As tarefas
+            ficam ligadas à sincronização mais recente em que apareceram.
           </p>
         ) : (
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Empresa / contato</th>
-                  <th>Valor</th>
-                  <th>Atualização</th>
-                  <th>Ação</th>
-                </tr>
-              </thead>
-              <tbody>
-                {records.map((record) => {
-                  const change = recordChange(record, workflow.reviewedAt);
-                  return (
-                    <tr key={record.id}>
-                      <td>
-                        <strong>{record.company}</strong>
-                        <br />
-                        <small>{record.contact}</small>
-                      </td>
-                      <td>{money(record.value)}</td>
-                      <td>
-                        <span
-                          className={`report-badge ${change === "new" ? "new" : change === "changed" ? "changed" : ""}`}
-                        >
-                          {change === "new"
-                            ? "Novo registro"
-                            : change === "changed"
-                              ? "Alterado"
-                              : "Revisado"}
-                        </span>
-                        <br />
-                        <small>{date(record.updatedAt)}</small>
-                      </td>
-                      <td>
-                        <button
-                          className="report-text-button"
-                          onClick={() => onOpenRecord(record)}
-                        >
-                          Abrir registro
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="report-filter">
+              <label htmlFor="task-search">Buscar</label>
+              <input
+                id="task-search"
+                type="search"
+                placeholder="Empresa, tarefa ou competência"
+                value={taskQuery}
+                onChange={(e) => setTaskQuery(e.target.value)}
+              />
+              <label htmlFor="task-state">Status</label>
+              <select
+                id="task-state"
+                value={taskState}
+                onChange={(e) =>
+                  setTaskState(e.target.value as "all" | ReportTaskState)
+                }
+              >
+                <option value="all">Todas</option>
+                <option value="open">Em aberto</option>
+                <option value="overdue">Atrasadas</option>
+                <option value="done">Concluídas</option>
+              </select>
+              <span>{visibleTasks.length} tarefa(s)</span>
+            </div>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Empresa</th>
+                    <th>Tarefa</th>
+                    <th>Competência</th>
+                    <th>Status</th>
+                    <th>Vencimento</th>
+                    <th>Atualização</th>
+                    <th>PDF no Drive</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleTasks.map((task) => {
+                    const change = recordChange(task, workflow.reviewedAt);
+                    const state = reportTaskState(task);
+                    const pdf = task.pdfLink ?? task.fileLink;
+                    return (
+                      <tr key={task.id}>
+                        <td>
+                          <strong>{task.company}</strong>
+                          {(task.companyCode || task.companyCnpj) && (
+                            <>
+                              <br />
+                              <small>
+                                {task.companyCode
+                                  ? `Cód. ${task.companyCode}`
+                                  : task.companyCnpj}
+                              </small>
+                            </>
+                          )}
+                        </td>
+                        <td>
+                          {task.taskName}
+                          {task.department && (
+                            <>
+                              <br />
+                              <small>{task.department}</small>
+                            </>
+                          )}
+                        </td>
+                        <td>{task.competence ?? "—"}</td>
+                        <td>
+                          <span className={`report-badge ${taskBadge[state]}`}>
+                            {reportTaskStateLabel[state]}
+                          </span>
+                        </td>
+                        <td>{day(task.dueDate)}</td>
+                        <td>
+                          <span
+                            className={`report-badge ${change === "new" ? "new" : change === "changed" ? "changed" : ""}`}
+                          >
+                            {change === "new"
+                              ? "Nova"
+                              : change === "changed"
+                                ? "Alterada"
+                                : "Revisada"}
+                          </span>
+                          <br />
+                          <small>{date(task.updatedAt)}</small>
+                        </td>
+                        <td>
+                          {pdf ? (
+                            <a
+                              className="report-text-button"
+                              href={pdf}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              Abrir PDF <ExternalLink size={12} />
+                            </a>
+                          ) : (
+                            <small>Não enviado</small>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {visibleTasks.length === 0 && (
+                <p className="report-empty-inline">
+                  Nenhuma tarefa neste filtro.
+                </p>
+              )}
+            </div>
+          </>
         )}
       </section>
       <section className="surface report-panel">
@@ -783,10 +873,10 @@ function ReportDetails({
                     <strong>Contexto</strong>
                     {q.recordLabel && (
                       <p>
-                        {q.recordLabel}
+                        Tarefa: {q.recordLabel}
                         {q.opportunityId &&
                         !records.some((r) => r.id === q.opportunityId)
-                          ? " (registro removido)"
+                          ? " (não está mais neste relatório)"
                           : ""}
                       </p>
                     )}
@@ -882,7 +972,7 @@ function ReportDetails({
           <h4>Registrar uma dúvida</h4>
           <div className="report-form-grid">
             <div>
-              <label htmlFor="question-record">Registro relacionado</label>
+              <label htmlFor="question-record">Tarefa relacionada</label>
               <select
                 id="question-record"
                 value={recordId}
@@ -892,7 +982,7 @@ function ReportDetails({
                 <option value="">Relatório completo</option>
                 {records.map((r) => (
                   <option key={r.id} value={r.id}>
-                    {r.company} · {r.contact}
+                    {reportTaskLabel(r)}
                   </option>
                 ))}
               </select>
