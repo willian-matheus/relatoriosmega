@@ -152,6 +152,31 @@ curl -H "Authorization: Bearer mega_..." -OJ "https://<dominio>/api/public/v1/ex
 
 A resposta traz `dados` (id, formato, nomeArquivo, contentType, tamanho, sha256, competencia, tipoDocumento, empresa, tarefa, enviadoEm, sincronizadoEm, downloadUrl) e `paginacao`. O download devolve o arquivo com `Content-Disposition` e o cabeçalho `X-Content-SHA256`. Erros: `401` para token ausente, inválido, expirado ou revogado; `403` para escopo insuficiente; `400` para parâmetros inválidos; `404` para extrato inexistente.
 
+## Recebimento de extratos de outras plataformas
+
+Outras plataformas também podem **enviar** extratos para o CRM: `POST /api/public/v1/extratos` (multipart/form-data), com um token que tenha a permissão **"Enviar extratos"**. Ao gerar o token em **Integrações → Tokens de API**, escolha **Consultar**, **Enviar** ou as duas. O padrão é só consultar, e um token só de consulta recebe `403` ao tentar enviar (e vice-versa).
+
+| Campo | Obrigatório | Formato |
+| --- | --- | --- |
+| `file` | Sim | `.ofx`, `.pdf` ou `.ofc`, em maiúsculas ou minúsculas, até 25 MB |
+| `cnpj` ou `empresaCodigo` | Um dos dois | CNPJ (14 dígitos) ou CPF (11), com ou sem máscara; ou o código da empresa |
+| `empresaNome` | Não | Usado quando a empresa não está no cadastro do Gestta |
+| `competencia` | Não | `AAAA-MM`; quando ausente, é deduzida dos lançamentos |
+| `tipo` | Não | `conta_corrente` (padrão), `aplicacao`, `emprestimo` ou `cotas` |
+| `banco`, `agencia`, `conta`, `observacao` | Não | Guardados como informados |
+
+Regras:
+
+- **Conteúdo conferido:** a extensão precisa bater com o conteúdo. Um PDF renomeado para `.ofx` é recusado (`415`). OFX e OFC trocados de extensão são aceitos, pelo conteúdo.
+- **Empresa:** é identificada no cadastro do Gestta pelo CNPJ ou pelo código. CNPJ e código de empresas diferentes são recusados (`422`). Empresa fora do cadastro é recebida com os dados informados e marcada como não identificada.
+- **OFC** (formato antigo do Microsoft Money): guardado como chegou e convertido para OFX (`apps/web/src/lib/ofc.ts`). Valores ambíguos fazem o arquivo ser recusado, em vez de convertido errado.
+- **PDF de conta corrente:** tenta a conversão para OFX, com a mesma conferência de saldos dos extratos do Gestta. Se não fechar, o PDF é recebido e a resposta traz o aviso.
+- **Mesmo arquivo de novo:** devolve `200` com `duplicado: true` e não grava nada.
+- **Caminho único:** o extrato recebido segue o mesmo caminho dos capturados do Gestta. Fica no armazenamento privado com origem `api`, ganha cópia no Drive, aparece no Painel e na API de consulta (campo `origem`) e entra no envio ao CRM-MEGA com a deduplicação. O OFC original não vai ao CRM-MEGA, só o OFX convertido dele.
+- **Respostas:** `201` recebido, `200` duplicado, `400` parâmetros, `401` token, `403` permissão, `413` tamanho, `415` arquivo, `422` empresa ou competência. A resposta de sucesso traz id, formato, competência, empresa (com `identificada`), o OFX convertido (quando houver) e `avisos` (falhas no Drive ou na conversão não desfazem o recebimento).
+
+A captura do Gestta também passou a aceitar arquivos `.ofc` enviados pelos clientes nas tarefas, com a mesma conversão.
+
 ## Envio de extratos para o CRM-MEGA
 
 Além da API de consulta, o CRM pode **enviar** os extratos para uma plataforma que recebe arquivos, como o CRM-MEGA (`POST /api/extratos`, multipart com arquivo, CNPJ, código e nome da empresa e competência, autenticado por `Authorization: Bearer <token>`). O token é gerado em **Integrações → Tokens de API** e cadastrado no destino em "Tokens de outras plataformas".
@@ -219,6 +244,7 @@ Rotas do Next (prefixo `/api`). Exceto as marcadas como públicas, todas exigem 
 | GET/POST        | `/api-tokens`                               | Listar / gerar tokens de API                          |
 | DELETE          | `/api-tokens/:id`                           | Revogar token de API                                  |
 | POST            | `/integrations/gestta/statements/sync`      | Capturar extratos enviados no Gestta                  |
+| POST            | `/public/v1/extratos`                       | Receber extrato de outra plataforma (token com envio) |
 | GET             | `/public/v1/extratos`                       | Listar extratos OFX/PDF (token de API)                |
 | GET             | `/public/v1/extratos/:id/download`          | Baixar extrato (token de API)                         |
 

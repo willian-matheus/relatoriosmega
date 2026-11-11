@@ -3,6 +3,21 @@ import { getOptionalSupabaseServerClient } from "./supabase-server";
 
 export const API_TOKEN_PREFIX = "mega_";
 export const STATEMENTS_READ_SCOPE = "extratos:read";
+/** Permite ENVIAR extratos para o relatoriosmega (POST /api/public/v1/extratos) */
+export const STATEMENTS_WRITE_SCOPE = "extratos:write";
+export const ALLOWED_SCOPES = [STATEMENTS_READ_SCOPE, STATEMENTS_WRITE_SCOPE] as const;
+
+/** Valida e normaliza as permissões pedidas (padrão: só leitura). */
+export function normalizeScopes(scopes: unknown): string[] {
+  if (scopes === undefined || scopes === null) return [STATEMENTS_READ_SCOPE];
+  if (!Array.isArray(scopes) || !scopes.length) {
+    throw new Error("Escolha ao menos uma permissão para o token.");
+  }
+  const unique = [...new Set(scopes.map(String))];
+  const invalid = unique.filter((s) => !(ALLOWED_SCOPES as readonly string[]).includes(s));
+  if (invalid.length) throw new Error(`Permissão inválida: ${invalid.join(", ")}.`);
+  return ALLOWED_SCOPES.filter((s) => unique.includes(s));
+}
 
 export interface ApiTokenInfo {
   id: string;
@@ -72,7 +87,9 @@ export async function createApiToken(input: {
   name: string;
   expiresInDays?: number | null;
   createdBy?: string | null;
+  scopes?: unknown;
 }): Promise<{ token: string; info: ApiTokenInfo }> {
+  const scopes = normalizeScopes(input.scopes);
   const name = input.name.trim();
   if (name.length < 2 || name.length > 80) {
     throw new Error("Informe um nome entre 2 e 80 caracteres.");
@@ -89,7 +106,7 @@ export async function createApiToken(input: {
     name,
     token_hash: hashApiToken(token),
     token_prefix: token.slice(0, API_TOKEN_PREFIX.length + 6),
-    scopes: [STATEMENTS_READ_SCOPE],
+    scopes,
     created_by: input.createdBy || null,
     created_at: now.toISOString(),
     expires_at: days ? new Date(now.getTime() + days * 86_400_000).toISOString() : null,

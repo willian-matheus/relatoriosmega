@@ -74,7 +74,8 @@ export interface DeliveryRow {
   company_cnpj: string | null;
   competence: string | null;
   document_type: string | null;
-  format: "ofx" | "pdf";
+  /** "ofc" nunca é enviado: vai o OFX convertido dele */
+  format: "ofx" | "pdf" | "ofc";
   file_name: string;
   sha256: string;
   uploaded_at: string | null;
@@ -174,7 +175,7 @@ export function toLocal(row: DeliveryRow, fp: StoredFingerprint, alreadySent: bo
     id: row.id,
     companyKey: companyKeyOf(row),
     competence: row.competence,
-    format: row.format,
+    format: row.format === "pdf" ? "pdf" : "ofx", // OFC já foi excluído antes do planejamento
     converted: Boolean(row.converted_from_id),
     sha256: row.sha256,
     fileName: row.file_name,
@@ -218,12 +219,11 @@ export async function deliverStatements(
   };
 
   // 1. Candidatos: conta corrente, ainda não enviados ou com erro e tentativas restantes
-  const pending = (await deps.store.listPending(options.ids)).filter(
+  const candidates = (await deps.store.listPending(options.ids)).filter(
     (r) =>
       isChecking(r) &&
       (r.delivery_status === null || (r.delivery_status === "erro" && r.delivery_attempts < MAX_ATTEMPTS)),
   );
-  if (!pending.length) return summary;
 
   const item = (r: DeliveryRow, result: DeliveryResult, detail: string): DeliveryItemResult => ({
     id: r.id,
@@ -234,6 +234,16 @@ export async function deliverStatements(
     result,
     detail,
   });
+
+  // OFC original não vai ao destino (que lê OFX/PDF): o OFX convertido dele é que concorre
+  const ofcReason = "arquivo OFC: o destino recebe o OFX convertido a partir dele";
+  for (const r of candidates.filter((x) => x.format === "ofc")) {
+    summary.skipped++;
+    summary.items.push(item(r, "nao_enviar", ofcReason));
+    if (!dryRun) await deps.store.markSkipped(r.id, ofcReason);
+  }
+  const pending = candidates.filter((r) => r.format !== "ofc");
+  if (!pending.length) return summary;
 
   // 2. Grupos empresa + competência, na ordem dos candidatos (mais antigos primeiro)
   const groupOrder: string[] = [];
@@ -274,7 +284,7 @@ export async function deliverStatements(
     const names = [...new Set(batchPending.filter((r) => !r.company_code).map((r) => r.company_name))];
     const competences = [...new Set(batchPending.map((r) => r.competence).filter((c): c is string => Boolean(c)))];
     const related = (await deps.store.listGroupRows(codes, names, competences)).filter(
-      (r) => isChecking(r) && keys.has(`${companyKeyOf(r)}|${r.competence}`),
+      (r) => isChecking(r) && r.format !== "ofc" && keys.has(`${companyKeyOf(r)}|${r.competence}`),
     );
     const rowsById = new Map<string, DeliveryRow>();
     for (const r of [...related, ...batchPending]) rowsById.set(r.id, r);

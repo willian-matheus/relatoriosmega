@@ -43,6 +43,8 @@ export function ApiTokensPanel({
   const [loadError, setLoadError] = useState("");
   const [name, setName] = useState("");
   const [expiresInDays, setExpiresInDays] = useState("365");
+  const [canRead, setCanRead] = useState(true);
+  const [canWrite, setCanWrite] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newToken, setNewToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -75,6 +77,7 @@ export function ApiTokensPanel({
         body: JSON.stringify({
           name,
           expiresInDays: expiresInDays ? Number(expiresInDays) : null,
+          scopes: [...(canRead ? ["extratos:read"] : []), ...(canWrite ? ["extratos:write"] : [])],
         }),
       });
       setNewToken(data.token);
@@ -137,11 +140,11 @@ export function ApiTokensPanel({
         </div>
         <div>
           <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 600 }}>
-            Tokens de API · Extratos OFX e PDF
+            Tokens de API · Extratos OFX, PDF e OFC
           </h2>
           <p style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: "13px" }}>
-            Gere um token para que outras plataformas busquem os extratos anexados às tarefas do
-            Gestta.
+            Gere tokens para outras plataformas consultarem e baixarem os extratos ou enviarem
+            extratos (OFX, PDF, OFC) para o CRM. Cada token tem só as permissões marcadas.
           </p>
         </div>
       </div>
@@ -175,7 +178,21 @@ export function ApiTokensPanel({
             <option value="">Sem expiração</option>
           </select>
         </label>
-        <button type="submit" className="primary-button" disabled={creating}>
+        <fieldset
+          style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px", border: 0, padding: 0, margin: 0 }}
+          disabled={creating}
+        >
+          <legend style={{ marginBottom: "6px", padding: 0 }}>Permissões</legend>
+          <label style={{ display: "inline-flex", gap: "6px", alignItems: "center" }}>
+            <input type="checkbox" checked={canRead} onChange={(e) => setCanRead(e.target.checked)} />
+            Consultar e baixar extratos
+          </label>
+          <label style={{ display: "inline-flex", gap: "6px", alignItems: "center" }}>
+            <input type="checkbox" checked={canWrite} onChange={(e) => setCanWrite(e.target.checked)} />
+            Enviar extratos (OFX, PDF, OFC)
+          </label>
+        </fieldset>
+        <button type="submit" className="primary-button" disabled={creating || (!canRead && !canWrite)}>
           {creating ? <LoaderCircle size={16} className="spin" /> : <Plus size={16} />}
           Gerar token
         </button>
@@ -230,6 +247,7 @@ export function ApiTokensPanel({
               <tr style={{ textAlign: "left", color: "var(--muted)" }}>
                 <th style={{ padding: "8px" }}>Nome</th>
                 <th style={{ padding: "8px" }}>Token</th>
+                <th style={{ padding: "8px" }}>Permissões</th>
                 <th style={{ padding: "8px" }}>Status</th>
                 <th style={{ padding: "8px" }}>Criado em</th>
                 <th style={{ padding: "8px" }}>Expira em</th>
@@ -245,6 +263,14 @@ export function ApiTokensPanel({
                     <td style={{ padding: "8px" }}>{t.name}</td>
                     <td style={{ padding: "8px" }}>
                       <code>{t.prefix}…</code>
+                    </td>
+                    <td style={{ padding: "8px" }}>
+                      {[
+                        t.scopes.includes("extratos:read") ? "Consultar" : null,
+                        t.scopes.includes("extratos:write") ? "Enviar" : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" + ") || "—"}
                     </td>
                     <td style={{ padding: "8px", color: status.active ? "#34d399" : "var(--muted)" }}>
                       {status.label}
@@ -291,7 +317,14 @@ curl -H "Authorization: Bearer <TOKEN>" \\
 
 # Baixar um arquivo (use o downloadUrl retornado na listagem)
 curl -H "Authorization: Bearer <TOKEN>" -OJ \\
-  "${baseUrl}/<ID>/download"`}
+  "${baseUrl}/<ID>/download"
+
+# Enviar um extrato (token com a permissão "Enviar extratos")
+# file: .ofx, .pdf ou .ofc | cnpj ou empresaCodigo (obrigatório)
+# competencia (AAAA-MM, opcional) | tipo: conta_corrente, aplicacao, emprestimo, cotas
+curl -H "Authorization: Bearer <TOKEN>" \\
+  -F "file=@extrato_setembro.ofx" -F "cnpj=12345678000190" -F "competencia=2026-09" \\
+  "${baseUrl}"`}
         </pre>
       </details>
     </section>

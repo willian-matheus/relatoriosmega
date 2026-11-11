@@ -2,11 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   readApiTokenFromHeaders,
   STATEMENTS_READ_SCOPE,
+  STATEMENTS_WRITE_SCOPE,
   verifyApiToken,
 } from "@/lib/api-tokens";
+import { defaultIntakeDeps, receiveStatement } from "@/lib/statement-intake";
 import { listStatements, onlyDigits, StatementFormat } from "@/lib/statements";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /**
  * API pública (autenticada por token) para plataformas externas listarem extratos.
@@ -33,8 +36,8 @@ export async function GET(request: NextRequest) {
   const errors: string[] = [];
 
   const formatoParam = params.get("formato")?.toLowerCase();
-  if (formatoParam && formatoParam !== "ofx" && formatoParam !== "pdf") {
-    errors.push("'formato' deve ser 'ofx' ou 'pdf'.");
+  if (formatoParam && formatoParam !== "ofx" && formatoParam !== "pdf" && formatoParam !== "ofc") {
+    errors.push("'formato' deve ser 'ofx', 'pdf' ou 'ofc'.");
   }
 
   const competencia = params.get("competencia") || undefined;
@@ -87,6 +90,8 @@ export async function GET(request: NextRequest) {
         sha256: s.sha256,
         competencia: s.competence,
         tipoDocumento: s.documentType,
+        // "gestta" = capturado das tarefas do Gestta; "api" = recebido de outra plataforma
+        origem: s.source,
         empresa: { nome: s.companyName, cnpj: s.companyCnpj, codigo: s.companyCode },
         tarefa: { id: s.gesttaTaskId, nome: s.taskName },
         enviadoEm: s.uploadedAt,
@@ -107,5 +112,75 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error("Erro na API pública de extratos:", error);
     return NextResponse.json({ erro: "Não foi possível listar os extratos." }, { status: 500 });
+  }
+}
+
+/**
+ * Recebimento de extrato enviado por outra plataforma.
+ *
+ * POST /api/public/v1/extratos  (multipart/form-data)
+ * Cabeçalho: Authorization: Bearer mega_...  (token com a permissão "extratos:write")
+ * Campos:
+ *   file           arquivo .ofx, .pdf ou .ofc (obrigatório; maiúsculas ou minúsculas)
+ *   cnpj           CNPJ/CPF da empresa   (informe ao menos um dos dois)
+ *   empresaCodigo  código da empresa
+ *   empresaNome    nome (opcional; usado se a empresa não estiver no cadastro)
+ *   competencia    AAAA-MM (opcional; deduzida dos lançamentos quando ausente)
+ *   tipo           conta_corrente (padrão) | aplicacao | emprestimo | cotas
+ *   banco, agencia, conta, observacao   (opcionais; guardados como informados)
+ * Respostas: 201 recebido | 200 arquivo já recebido antes | 400/413/415/422 recusado
+ */
+export async function POST(request: NextRequest) {
+  const auth = await verifyApiToken(readApiTokenFromHeaders(request.headers), STATEMENTS_WRITE_SCOPE);
+  if (!auth.ok) {
+    return NextResponse.json(
+      { erro: auth.error },
+      { status: auth.status, headers: auth.status === 401 ? { "WWW-Authenticate": "Bearer" } : undefined },
+    );
+  }
+
+  if (!(request.headers.get("content-type") || "").includes("multipart/form-data")) {
+    return NextResponse.json({ erro: "Envie como multipart/form-data, com o arquivo no campo 'file'." }, { status: 400 });
+  }
+
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return NextResponse.json({ erro: "Corpo da requisição inválido." }, { status: 400 });
+  }
+  const file = form.get("file");
+  if (!file || typeof file === "string") {
+    return NextResponse.json({ erro: "Envie o arquivo do extrato no campo 'file'." }, { status: 400 });
+  }
+  const text = (key: string) => {
+    const v = form.get(key);
+    return typeof v === "string" && v.trim() ? v.trim().slice(0, 300) : null;
+  };
+  const metadata: Record<string, string> = {};
+  for (const key of ["banco", "agencia", "conta", "observacao"]) {
+    const v = text(key);
+    if (v) metadata[key] = v;
+  }
+
+  try {
+    const result = await receiveStatement(
+      {
+        fileName: file.name || "extrato",
+        buffer: Buffer.from(await file.arrayBuffer()),
+        tokenId: auth.token.id,
+        cnpj: text("cnpj"),
+        empresaCodigo: text("empresaCodigo") || text("codigoEmpresa"),
+        empresaNome: text("empresaNome") || text("nomeEmpresa"),
+        competencia: text("competencia") || text("competence"),
+        tipo: text("tipo"),
+        metadata,
+      },
+      defaultIntakeDeps(),
+    );
+    return NextResponse.json(result.body, { status: result.status });
+  } catch (error) {
+    console.error("Erro ao receber extrato:", error);
+    return NextResponse.json({ erro: "Não foi possível receber o extrato." }, { status: 500 });
   }
 }

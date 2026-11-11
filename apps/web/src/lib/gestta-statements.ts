@@ -13,7 +13,7 @@ import {
 } from "./statements";
 import { getAuthenticatedDriveClient, findOrCreateFolder, uploadFileToFolder } from "./google";
 import { sanitizeFolderName } from "./gestta-sync";
-import { buildOfx, parsePdfStatement, PdfStatementResult } from "./pdf-to-ofx";
+import { CONVERTED_SUFFIX, convertOfcStatement, convertPdfStatement } from "./statement-conversions";
 import {
   mapTaskDetailToDocumentRequests,
   mapTaskDocToRow,
@@ -39,7 +39,6 @@ const STATEMENT_TASK_NAME = /^envio de extratos banc[aá]rios/i;
 const STATEMENT_REQUESTED_DOC = /^extratos?\b/i;
 // Item de conta corrente: único em que o OFX faz sentido (e é pedido ao cliente)
 const CHECKING_ACCOUNT_DOC = /conta\s+corrente/i;
-const CONVERTED_SUFFIX = "-convertido-ofx";
 
 const DETAIL_CONCURRENCY = 4;
 
@@ -67,6 +66,7 @@ export interface StatementSyncSummary {
   saved: number;
   savedOfx: number;
   savedPdf: number;
+  savedOfc: number;
   alreadyCaptured: number;
   drive: {
     connected: boolean;
@@ -210,20 +210,28 @@ export async function buildDriveUploader(
   };
 }
 
-export function buildConversionNote(pdfFileName: string, result: PdfStatementResult): string {
-  const brl = (n?: number) =>
-    n === undefined ? "-" : n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-  const fmt = (iso?: string) => (iso ? iso.split("-").reverse().join("/") : "?");
-  const first = result.period?.start || result.transactions[0]?.date;
-  const last = result.period?.end || result.transactions[result.transactions.length - 1]?.date;
-  return (
-    `Arquivo convertido automaticamente do PDF "${pdfFileName}" enviado pelo cliente (não foi enviado OFX). ` +
-    `${result.transactions.length} lançamentos de ${fmt(first)} a ${fmt(last)}, conferidos com os saldos do extrato ` +
-    `(saldo inicial ${brl(result.openingBalance)}, saldo final ${brl(result.closingBalance)}).`
-  );
+// Mantido aqui por compatibilidade: a nota agora mora em statement-conversions.ts
+export { buildConversionNote } from "./statement-conversions";
+
+/**
+ * Cópia avulsa de um extrato no Drive (usada pelo recebimento via API).
+ * Retorna null quando o Drive não está conectado; erros de envio são lançados.
+ */
+export async function copyStatementToDrive(
+  statement: StatementFile,
+  buffer: Buffer,
+): Promise<{ fileId: string; link: string | null } | null> {
+  const summary = {
+    drive: { connected: false, uploaded: 0, backfilled: 0, errors: [] as { fileName: string; message: string }[] },
+  } as StatementSyncSummary;
+  const uploader = await createDriveUploader(summary);
+  if (!uploader) return null;
+  const uploaded = await uploader.upload(statement, buffer);
+  await setStatementDriveFile(statement.id, uploaded);
+  return uploaded;
 }
 
-/** Gera e guarda o OFX de cada PDF de conta corrente que ainda não foi convertido. */
+/** Gera e guarda o OFX de cada PDF de conta corrente / OFC que ainda não foi convertido. */
 async function convertCheckingPdfs(
   pdfs: { id: string; buffer?: Buffer }[],
   summary: StatementSyncSummary,
@@ -234,53 +242,25 @@ async function convertCheckingPdfs(
     try {
       const content = await getStatementContent(item.id);
       if (!content) continue;
-      const pdf = content.file;
-      pdfName = pdf.fileName;
-      const convertedDocId = `${pdf.gesttaDocumentId}${CONVERTED_SUFFIX}`;
-
-      const already = (await getCapturedStatements([convertedDocId])).get(convertedDocId);
-      if (already) {
+      pdfName = content.file.fileName;
+      const convert = content.file.format === "ofc" ? convertOfcStatement : convertPdfStatement;
+      const result = await convert(content.file, item.buffer || content.buffer);
+      if (!result.ok) {
+        summary.conversions.failed.push({ fileName: content.file.fileName, reason: result.reason });
+        continue;
+      }
+      if (result.already) {
         summary.conversions.alreadyConverted++;
-        if (!already.driveFileId) {
-          const conv = await getStatementContent(already.id);
+        if (!result.driveFileId) {
+          const conv = await getStatementContent(result.convertedId);
           if (conv) await copyToDrive(conv.file, conv.buffer, true);
         }
         continue;
       }
-
-      const result = await parsePdfStatement(item.buffer || content.buffer, { fileName: pdf.fileName });
-      if (!result.ok) {
-        summary.conversions.failed.push({ fileName: pdf.fileName, reason: result.reason || "falha na leitura" });
-        continue;
-      }
-
-      const ofx = buildOfx(result, { fitIdPrefix: pdf.gesttaDocumentId.slice(-8) });
-      const base = pdf.fileName.replace(/\.pdf$/i, "");
-      const saved = await saveStatementFromGesttaDocument({
-        documentId: convertedDocId,
-        fileName: `${base} (arquivo convertido do PDF).ofx`,
-        buffer: ofx,
-        task: {
-          id: pdf.gesttaTaskId,
-          name: pdf.taskName || "",
-          companyName: pdf.companyName,
-          companyCode: pdf.companyCode || undefined,
-          companyCnpj: pdf.companyCnpj || undefined,
-          competence: pdf.competence || undefined,
-        },
-        documentType: pdf.documentType || undefined,
-        uploadedAt: pdf.uploadedAt || undefined,
-        syncedAt: new Date().toISOString(),
-        conversion: { fromId: pdf.id, note: buildConversionNote(pdf.fileName, result) },
-      });
-      if (!saved) {
-        summary.conversions.failed.push({ fileName: pdf.fileName, reason: "OFX gerado inválido" });
-        continue;
-      }
       summary.conversions.converted++;
-      await copyToDrive(saved, ofx, false);
-    } catch (err: any) {
-      summary.conversions.failed.push({ fileName: pdfName, reason: err?.message || String(err) });
+      await copyToDrive(result.saved, result.ofx, false);
+    } catch (err) {
+      summary.conversions.failed.push({ fileName: pdfName, reason: err instanceof Error ? err.message : String(err) });
     }
   }
 }
@@ -317,6 +297,7 @@ export async function syncGesttaStatements(
     saved: 0,
     savedOfx: 0,
     savedPdf: 0,
+    savedOfc: 0,
     alreadyCaptured: 0,
     drive: { connected: false, uploaded: 0, backfilled: 0, errors: [] },
     conversions: { converted: 0, alreadyConverted: 0, failed: [] },
@@ -412,8 +393,11 @@ export async function syncGesttaStatements(
     const checkingFiles = files.filter((f) => CHECKING_ACCOUNT_DOC.test(f.doc.name || ""));
     const clientSentOfx = checkingFiles.some((f) => /\.(ofx|qfx)$/i.test(String(f.file.file_name || "")));
     const checkingPdfs: { id: string; buffer?: Buffer }[] = [];
+    // OFC é sempre convertido para OFX (dados estruturados, sem ambiguidade de leitura)
+    const ofcFiles: { id: string; buffer?: Buffer }[] = [];
     const isCheckingPdf = (doc: any, fileName: string) =>
       CHECKING_ACCOUNT_DOC.test(doc.name || "") && /\.pdf$/i.test(fileName);
+    const isOfc = (fileName: string) => /\.ofc$/i.test(fileName);
 
     for (const { doc, file } of files) {
       const fileId = String(file._id);
@@ -422,6 +406,7 @@ export async function syncGesttaStatements(
       if (captured) {
         summary.alreadyCaptured++;
         if (isCheckingPdf(doc, fileName)) checkingPdfs.push({ id: captured.id });
+        if (isOfc(fileName)) ofcFiles.push({ id: captured.id });
         // Capturado quando o Drive não estava conectado: envia a cópia agora
         if (drive && !captured.driveFileId) {
           try {
@@ -433,8 +418,8 @@ export async function syncGesttaStatements(
         }
         continue;
       }
-      if (!/\.(ofx|qfx|pdf)$/i.test(fileName) && /\.[a-z0-9]{2,5}$/i.test(fileName)) {
-        summary.ignored.push({ fileName, reason: "formato não suportado (apenas OFX e PDF)" });
+      if (!/\.(ofx|qfx|pdf|ofc)$/i.test(fileName) && /\.[a-z0-9]{2,5}$/i.test(fileName)) {
+        summary.ignored.push({ fileName, reason: "formato não suportado (apenas OFX, PDF e OFC)" });
         continue;
       }
       if (!customerId) {
@@ -472,15 +457,17 @@ export async function syncGesttaStatements(
         });
 
         if (!saved) {
-          summary.ignored.push({ fileName, reason: "conteúdo não é OFX nem PDF" });
+          summary.ignored.push({ fileName, reason: "conteúdo não é OFX, PDF nem OFC" });
         } else {
           summary.saved++;
           if (saved.format === "ofx") summary.savedOfx++;
+          else if (saved.format === "ofc") summary.savedOfc++;
           else summary.savedPdf++;
           if (!saved.driveFileId) await copyToDrive(saved, downloaded.buffer, false);
           if (saved.format === "pdf" && isCheckingPdf(doc, fileName)) {
             checkingPdfs.push({ id: saved.id, buffer: downloaded.buffer });
           }
+          if (saved.format === "ofc") ofcFiles.push({ id: saved.id, buffer: downloaded.buffer });
         }
       } catch (err: any) {
         summary.errors.push({ taskId: task._id, fileName, message: err?.message || String(err) });
@@ -491,6 +478,7 @@ export async function syncGesttaStatements(
     if (!clientSentOfx && checkingPdfs.length) {
       await convertCheckingPdfs(checkingPdfs, summary, copyToDrive);
     }
+    if (ofcFiles.length) await convertCheckingPdfs(ofcFiles, summary, copyToDrive);
   }).finally(async () => {
     // Painel: grava os itens coletados (também se a etapa 2 for interrompida)
     summary.snapshot.documentRequests = await safeSnapshotWrite(() =>

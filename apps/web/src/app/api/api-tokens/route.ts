@@ -33,6 +33,7 @@ export async function POST(request: NextRequest) {
       name,
       expiresInDays,
       createdBy: user?.email || null,
+      scopes: body?.scopes,
     });
 
     // O token completo é exibido uma única vez

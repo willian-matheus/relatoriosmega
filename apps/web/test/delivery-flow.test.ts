@@ -336,6 +336,16 @@ describe("fluxo de envio", () => {
     assert.equal(destination.received.length, 1);
   });
 
+  test("OFC original nunca é enviado; vai o OFX convertido dele", async () => {
+    store.add({ id: "orig", format: "ofc" as any, file_name: "extrato.ofc", buffer: Buffer.from("<OFC>…</OFC>") });
+    store.add({ id: "conv", converted_from_id: "orig", file_name: "extrato (arquivo convertido do OFC).ofx", buffer: makeOfx("341", "12345", SEPT) });
+    const r = await deliverStatements({}, deps);
+    assert.equal(r.sent, 1);
+    assert.deepEqual(destination.received.map((p) => p.fileName), ["extrato (arquivo convertido do OFC).ofx"]);
+    assert.equal(store.status("orig"), "nao_enviar");
+    assert.match(store.rows.get("orig")!.delivery_response!, /OFC/);
+  });
+
   test("ignora extratos que não são de conta corrente", async () => {
     store.add({ id: "aplic", document_type: "Extratos de Aplicações Financeiras (em .PDF)", format: "pdf", buffer: Buffer.from("%PDF") });
     store.add({ id: "cotas", document_type: "Extratos de Cotas de Capital", buffer: makeOfx("085", "1", SEPT) });

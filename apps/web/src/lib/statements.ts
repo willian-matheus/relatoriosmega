@@ -2,17 +2,20 @@ import { createHash, randomUUID } from "node:crypto";
 import { getOptionalSupabaseServerClient } from "./supabase-server";
 
 /**
- * Extratos bancários (OFX/PDF) capturados dos anexos das tarefas do Gestta e
- * disponibilizados para plataformas externas via API com token.
+ * Extratos bancários (OFX/PDF/OFC) capturados dos anexos das tarefas do Gestta ou
+ * recebidos de outras plataformas pela API, disponibilizados via API com token.
  */
 
-export type StatementFormat = "ofx" | "pdf";
+export type StatementFormat = "ofx" | "pdf" | "ofc";
+/** De onde veio o extrato */
+export type StatementSource = "gestta" | "api";
 
 export const STATEMENTS_BUCKET = "statements";
 
 const CONTENT_TYPES: Record<StatementFormat, string> = {
   ofx: "application/x-ofx",
   pdf: "application/pdf",
+  ofc: "application/x-ofc",
 };
 
 // Palavras que identificam um PDF como extrato bancário (no nome do arquivo ou no
@@ -27,7 +30,10 @@ function looksLikeBankStatement(text: string): boolean {
 export interface StatementFile {
   id: string;
   gesttaDocumentId: string;
-  gesttaTaskId: string;
+  /** null nos extratos recebidos pela API (não vêm de tarefa do Gestta) */
+  gesttaTaskId: string | null;
+  source: StatementSource;
+  receivedByTokenId: string | null;
   taskName: string | null;
   companyName: string;
   companyCode: string | null;
@@ -51,7 +57,10 @@ export interface StatementFile {
 interface StatementRow {
   id: string;
   gestta_document_id: string;
-  gestta_task_id: string;
+  gestta_task_id: string | null;
+  source?: StatementSource;
+  received_by_token_id?: string | null;
+  received_metadata?: Record<string, unknown> | null;
   task_name: string | null;
   company_name: string;
   company_code: string | null;
@@ -80,6 +89,8 @@ function toFile(row: StatementRow): StatementFile {
     id: row.id,
     gesttaDocumentId: row.gestta_document_id,
     gesttaTaskId: row.gestta_task_id,
+    source: row.source ?? "gestta",
+    receivedByTokenId: row.received_by_token_id ?? null,
     taskName: row.task_name,
     companyName: row.company_name,
     companyCode: row.company_code,
@@ -127,6 +138,10 @@ export function detectStatementFormat(input: {
   const head = input.buffer.subarray(0, 2048).toString("latin1");
   if (/^\s*OFXHEADER\s*:/i.test(head) || /<\?OFX\b/i.test(head) || /<OFX>/i.test(head)) {
     return "ofx";
+  }
+  // OFC (Open Financial Connectivity, formato antigo do Microsoft Money)
+  if (/^\s*OFCHEADER\s*:/i.test(head) || /<OFC>/i.test(head)) {
+    return "ofc";
   }
   if (head.startsWith("%PDF-")) {
     const ok =
@@ -188,7 +203,7 @@ export async function setStatementDriveFile(
 }
 
 function normalizeFileName(fileName: string, format: StatementFormat): string {
-  const base = fileName.replace(/\.(pdf|ofx|qfx)$/i, "") || "extrato";
+  const base = fileName.replace(/\.(pdf|ofx|qfx|ofc)$/i, "") || "extrato";
   return `${base}.${format}`;
 }
 
@@ -201,7 +216,8 @@ export async function saveStatementFromGesttaDocument(input: {
   fileName: string;
   buffer: Buffer;
   task: {
-    id: string;
+    /** null nos extratos recebidos pela API */
+    id: string | null;
     name: string;
     companyName: string;
     companyCode?: string;
@@ -214,13 +230,17 @@ export async function saveStatementFromGesttaDocument(input: {
   syncedAt: string;
   /** OFX gerado a partir de um PDF: id do extrato PDF de origem e observação */
   conversion?: { fromId: string; note: string };
+  /** Recebido pela API: token remetente e dados informados por ele */
+  received?: { tokenId: string | null; metadata?: Record<string, unknown> | null };
+  /** O remetente declarou que é extrato bancário (vale como contexto do PDF) */
+  declaredStatement?: boolean;
 }): Promise<StatementFile | null> {
   const format = detectStatementFormat({
     fileName: input.fileName,
     buffer: input.buffer,
     // O documento solicitado (ex.: "Extratos de Conta Corrente") é o melhor contexto;
     // o nome da tarefa vale só quando ele não existe.
-    context: input.documentType || input.task.name,
+    context: input.declaredStatement ? "extrato bancário" : input.documentType || input.task.name,
   });
   if (!format) return null;
 
@@ -235,6 +255,9 @@ export async function saveStatementFromGesttaDocument(input: {
   const row: Omit<StatementRow, "id" | "drive_file_id" | "drive_file_link"> = {
     gestta_document_id: input.documentId,
     gestta_task_id: input.task.id,
+    source: input.received ? "api" : "gestta",
+    received_by_token_id: input.received?.tokenId ?? null,
+    received_metadata: input.received?.metadata ?? null,
     task_name: input.task.name || null,
     company_name: input.task.companyName,
     company_code: input.task.companyCode || null,
