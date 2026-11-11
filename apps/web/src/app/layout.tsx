@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import "./globals.css";
 export const metadata: Metadata = {
-  title: "Mega CRM · Seu próximo negócio",
+  title: "Mega · Relatórios Gestta & Google Drive",
   description:
-    "Organize oportunidades e transforme relatórios em relacionamentos.",
+    "Busque relatórios, tarefas e documentos do Gestta e envie ao Google Drive.",
   icons: { icon: "/favicon.svg" },
 };
 export default function RootLayout({

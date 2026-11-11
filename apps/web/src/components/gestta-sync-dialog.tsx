@@ -70,8 +70,8 @@ export function GesttaSyncDialog({
 
   return (
     <Dialog
-      title="Sincronizar Gestta com Google Drive e Mega CRM"
-      subtitle="Obtém tarefas e relatórios do Gestta, salva no CRM e organiza no Google Drive por Empresa / Competência / Tarefa."
+      title="Sincronizar Gestta com o Google Drive"
+      subtitle="Obtém tarefas e relatórios do Gestta, registra o relatório e organiza no Google Drive por Empresa / Competência / Tarefa."
       onClose={() => {
         if (!loading) {
           setError(null);
@@ -125,8 +125,8 @@ export function GesttaSyncDialog({
                   detalhes.
                 </li>
                 <li>
-                  Registra as tarefas como oportunidades e relatórios no{" "}
-                  <strong>Mega CRM</strong>.
+                  Registra o relatório e as tarefas sincronizadas no{" "}
+                  <strong>Supabase</strong> (aba Relatórios e Histórico).
                 </li>
                 <li>
                   Cria e organiza a hierarquia de pastas no{" "}
@@ -269,7 +269,7 @@ export function GesttaSyncDialog({
                 >
                   Foram sincronizadas <strong>{result.totalTasks} tarefas</strong>{" "}
                   de <strong>{result.totalCompanies} empresas</strong>, salvas no
-                  CRM e organizadas no Google Drive.
+                  sistema e organizadas no Google Drive.
                 </p>
                 {result.driveRootUrl && (
                   <a

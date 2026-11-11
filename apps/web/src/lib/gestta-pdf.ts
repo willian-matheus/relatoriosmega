@@ -182,9 +182,9 @@ export async function generateTaskPdfReport(
   const syncRows = [
     ["Data/Hora do Processamento:", emissionDate],
     ["Destino na Nuvem:", "Google Drive (Empresa / Competencia / Tarefa)"],
-    ["Registro no CRM:", "Mega CRM - Modulo Oportunidades & Historico"],
+    ["Registro no sistema:", "Mega - Relatorios & Historico"],
     ["Formato do Arquivo:", "PDF Vetorial Padronizado (application/pdf)"],
-    ["Formato OFX:", "Nao aplicavel ao Gestta (exclusivo para extratos bancarios)"],
+    ["Extratos OFX/PDF:", "Anexos de extrato disponiveis via API com token"],
   ];
 
   y = drawInfoTable(page, font, fontBold, margin, y, syncRows);

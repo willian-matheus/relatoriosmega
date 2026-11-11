@@ -119,6 +119,8 @@ export async function uploadFileToFolder(
     mimeType: string;
     content: string | Buffer;
     parentId: string;
+    /** Descrição exibida nos detalhes do arquivo no Drive */
+    description?: string;
   },
 ): Promise<{ id: string; name: string; webViewLink?: string }> {
   const { Readable } = await import("node:stream");
@@ -141,6 +143,7 @@ export async function uploadFileToFolder(
     const fileId = existing.data.files[0].id!;
     const updateRes = await drive.files.update({
       fileId,
+      requestBody: options.description ? { description: options.description } : undefined,
       media: {
         mimeType: options.mimeType,
         body: bodyStream,
@@ -158,6 +161,7 @@ export async function uploadFileToFolder(
     requestBody: {
       name: safeName,
       parents: [options.parentId],
+      ...(options.description ? { description: options.description } : {}),
     },
     media: {
       mimeType: options.mimeType,

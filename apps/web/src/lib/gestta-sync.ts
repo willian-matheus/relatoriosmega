@@ -65,7 +65,7 @@ export interface SyncSummary {
   companies: SyncCompanyResult[];
 }
 
-function sanitizeFolderName(name: string): string {
+export function sanitizeFolderName(name: string): string {
   return name
     .replace(/[<>:"/\\|?*]/g, " ")
     .replace(/\s+/g, " ")
@@ -99,7 +99,7 @@ TIPO:          ${task.type || "RECURRENT"} / ${task.subtype || "AUTOMATIC"}
 SINCRONIZAÇÃO:
 Processado em: ${nowStr}
 Armazenado em: Google Drive (Estrutura: Empresa / Competência / Tarefa)
-Registrado em: Mega CRM (Oportunidades, Relatórios e Atividades)
+Registrado em: Mega (Relatórios, Tarefas e Atividades)
 ------------------------------------------------------------------------
 RELATÓRIOS DO SISTEMA GESTTA DISPONÍVEIS NA CONTA (${allReports.length}):
 ${allReports.slice(0, 10).map((r) => ` - [${r.type}] ${r.name}`).join("\n")}
@@ -202,8 +202,8 @@ export async function syncGesttaToCrmAndDrive(
     }
   }
 
-  // 4. Criação do Relatório no CRM (Supabase)
-  console.log(`[4/5] Registrando relatório e ${tasks.length} oportunidades no Mega CRM...`);
+  // 4. Criação do Relatório (Supabase)
+  console.log(`[4/5] Registrando relatório com ${tasks.length} tarefas no Supabase...`);
   const supabase = getOptionalSupabaseServerClient();
   const reportId = randomUUID();
 
@@ -218,9 +218,9 @@ export async function syncGesttaToCrmAndDrive(
         source: "gestta",
         format: "PDF",
         pdfReportsGenerated: true,
-        ofxSupported: false,
-        ofxNote:
-          "Formato OFX e exclusivo para extratos bancarios; tarefas do Gestta consolidadas em PDF.",
+        statementsApi: true,
+        statementsNote:
+          "Extratos OFX/PDF enviados nas tarefas de extratos sao disponibilizados em /api/public/v1/extratos.",
         totalTasks: tasks.length,
         totalCompanies: companiesMap.size,
         googleDriveFolderId: driveRootFolderId,
@@ -232,38 +232,16 @@ export async function syncGesttaToCrmAndDrive(
       },
     });
 
-    // Registra as tarefas no CRM como oportunidades vinculadas
-    const oppsToInsert = tasks.map((t) => ({
-      report_id: reportId,
-      company: t.companyName,
-      contact: t.companyCode ? `Cód. ${t.companyCode}` : t.companyCnpj || "Gestta",
-      email: "",
-      value: 0,
-      stage:
-        t.status === "DONE"
-          ? "won"
-          : t.overdue
-            ? "contact"
-            : "proposal",
-      owner: "Gestta Automático",
-      priority: t.overdue ? "high" : "medium",
-      source: "Gestta",
-      due_date: t.dueDate ? t.dueDate.slice(0, 10) : undefined,
-      notes: `Tarefa: ${t.name} | Competência: ${t.competence} | Status: ${t.status} | Prazo Legal: ${t.legalDate ? t.legalDate.slice(0, 10) : "N/A"}`,
-    }));
+    // As tarefas ficam vinculadas ao relatório via gestta_history_records.report_id
+    // (gravado abaixo, após o envio ao Drive).
 
-    const { error: oppErr } = await supabase.from("opportunities").insert(oppsToInsert);
-    if (oppErr) {
-      console.warn("Aviso ao inserir oportunidades no CRM:", oppErr.message);
-    }
-
-    // Registra atividade no CRM
+    // Registra atividade
     await supabase.from("activities").insert({
       report_id: reportId,
       company: "Gestta & Google Drive",
       description: `Sincronizadas ${tasks.length} tarefas de ${companiesMap.size} empresas. Organizadas no Google Drive por Empresa/Competência/Tarefa.`,
     });
-    console.log("      Registros persistidos com sucesso no Supabase CRM.");
+    console.log("      Relatório e atividade persistidos no Supabase.");
   }
 
   // 5. Envio e Organização no Google Drive
@@ -529,9 +507,9 @@ export async function syncGesttaToCrmAndDrive(
             source: "gestta",
             format: "PDF",
             pdfReportsGenerated: true,
-            ofxSupported: false,
-            ofxNote:
-              "Formato OFX e exclusivo para extratos bancarios; relatorios consolidados em PDF.",
+            statementsApi: true,
+            statementsNote:
+              "Extratos OFX/PDF enviados nas tarefas de extratos sao disponibilizados em /api/public/v1/extratos.",
             totalTasks: tasks.length,
             totalCompanies: resultCompanies.length,
             googleDriveFolderId: driveRootFolderId,

@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const config: NextConfig = {
   devIndicators: false,
+  // pdf.js (conversão de extrato PDF -> OFX) roda no servidor sem ser empacotado
+  serverExternalPackages: ["pdfjs-dist"],
   async rewrites() {
     return {
       beforeFiles: [],

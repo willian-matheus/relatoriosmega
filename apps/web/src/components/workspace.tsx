@@ -1,22 +1,11 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Activity } from "@mega/contracts";
 import {
-  Activity,
-  Opportunity,
-  OpportunityInput,
-  owners,
-  Stage,
-  stages,
-  WorkspaceData,
-} from "@mega/contracts";
-import {
-  ArrowDownToLine,
   ArrowUpRight,
-  BarChart3,
   Bell,
   Building2,
   Check,
-  ChevronDown,
   ChevronRight,
   CircleHelp,
   CircleX,
@@ -24,63 +13,71 @@ import {
   FileSpreadsheet,
   FolderOpen,
   FolderSync,
-  LayoutDashboard,
-  LayoutGrid,
-  List,
   LoaderCircle,
   Menu,
-  MoreHorizontal,
-  Plus,
-  Search,
   SlidersHorizontal,
-  Target,
-  TrendingUp,
-  Users,
-  Wallet,
   X,
   ExternalLink,
   LogOut,
   RefreshCw,
   History,
+  LayoutDashboard,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { dateLabel, initials, localDate, money } from "@/lib/format";
-import { Kanban } from "./kanban";
-import { OpportunityDialog } from "./opportunity-dialog";
-import { ImportDialog } from "./import-dialog";
+import type { WorkspaceSnapshot } from "@/lib/report-tasks";
 import { ReportCenter } from "./report-center";
-import { GesttaImportDialog } from "./gestta-import-dialog";
 import { GesttaSyncDialog } from "./gestta-sync-dialog";
 import { HistoryView } from "./history-view";
+import { ApiTokensPanel } from "./api-tokens-panel";
+import { DashboardView } from "./dashboard-view";
 
-type View = "overview" | "pipeline" | "reports" | "history" | "contacts" | "integrations";
+/**
+ * Abas do workspace, na ordem do menu. Para acrescentar uma view, inclua um
+ * item aqui (o tipo `View` é derivado deste array) e renderize-a em <main>.
+ */
 const navigation = [
-  { id: "overview", label: "Visão geral", icon: LayoutDashboard },
-  { id: "pipeline", label: "Pipeline", icon: LayoutGrid },
-  { id: "reports", label: "Relatórios", icon: FileBarChart2 },
-  { id: "history", label: "Histórico", icon: History },
-  { id: "contacts", label: "Contatos", icon: Users },
-  { id: "integrations", label: "Integrações", icon: SlidersHorizontal },
+  {
+    id: "dashboard",
+    label: "Painel",
+    icon: LayoutDashboard,
+    title: "Painel",
+    description:
+      "Tarefas pendentes e atrasadas, extratos que os clientes ainda não enviaram e a situação do Google Drive.",
+  },
+  {
+    id: "reports",
+    label: "Relatórios",
+    icon: FileBarChart2,
+    title: "Central de relatórios",
+    description:
+      "Veja as tarefas que chegaram do Gestta, o que mudou e o que precisa da sua atenção.",
+  },
+  {
+    id: "history",
+    label: "Histórico",
+    icon: History,
+    title: "Histórico Gestta & Google Drive",
+    description:
+      "Consulte relatórios e tarefas resgatados automaticamente do Gestta e salvos no Google Drive.",
+  },
+  {
+    id: "integrations",
+    label: "Integrações",
+    icon: SlidersHorizontal,
+    title: "Integrações & Conexões",
+    description:
+      "Conecte o Gestta e o Google Drive, sincronize as tarefas e gerencie os tokens de API.",
+  },
 ] as const;
-const empty: WorkspaceData = { opportunities: [], reports: [], activities: [] };
+type View = (typeof navigation)[number]["id"];
+const initialView: View = "dashboard";
+const empty: WorkspaceSnapshot = { reports: [], activities: [], tasks: [] };
 
 export function Workspace() {
-  const [view, setView] = useState<View>("reports");
-  const [data, setData] = useState<WorkspaceData>(empty);
+  const [view, setView] = useState<View>(initialView);
+  const [data, setData] = useState<WorkspaceSnapshot>(empty);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [query, setQuery] = useState("");
-  const [owner, setOwner] = useState("all");
-  const [priority, setPriority] = useState("all");
-  const [showFilters, setShowFilters] = useState(false);
-  const [mode, setMode] = useState<"board" | "list">("board");
-  const [editor, setEditor] = useState<{
-    item?: Opportunity;
-    stage: Stage;
-  } | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const mutationLock = useRef(false);
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(
     null,
   );
@@ -88,7 +85,6 @@ export function Workspace() {
   const [activityOpen, setActivityOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [clock, setClock] = useState("");
-  const searchRef = useRef<HTMLInputElement>(null);
   const [googleStatus, setGoogleStatus] = useState<{
     connected: boolean;
     email?: string | null;
@@ -135,7 +131,6 @@ export function Workspace() {
     lastTestedAt?: string | null;
   } | null>(null);
   const [gesttaTesting, setGesttaTesting] = useState(false);
-  const [gesttaImportOpen, setGesttaImportOpen] = useState(false);
   const [gesttaSyncOpen, setGesttaSyncOpen] = useState(false);
 
   const checkGesttaStatus = useCallback(async () => {
@@ -207,8 +202,12 @@ export function Workspace() {
   }
 
   const refresh = useCallback(async () => {
-    const result = await api<WorkspaceData>("/workspace");
-    setData(result);
+    const result = await api<WorkspaceSnapshot>("/workspace");
+    setData({
+      reports: result.reports ?? [],
+      activities: result.activities ?? [],
+      tasks: result.tasks ?? [],
+    });
   }, []);
   const load = useCallback(async () => {
     setLoading(true);
@@ -251,7 +250,7 @@ export function Workspace() {
         year: "numeric",
       }).format(new Date()),
     );
-  }, [load, checkGoogleStatus]);
+  }, [load, checkGoogleStatus, checkGesttaStatus, checkSession]);
   useEffect(() => {
     if (!toast) return;
     const id = setTimeout(() => setToast(null), 5000);
@@ -259,10 +258,6 @@ export function Workspace() {
   }, [toast]);
   useEffect(() => {
     function key(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key === "k") {
-        event.preventDefault();
-        searchRef.current?.focus();
-      }
       if (event.key === "Escape") {
         setSidebar(false);
         setActivityOpen(false);
@@ -275,26 +270,6 @@ export function Workspace() {
   function navigate(next: View) {
     setView(next);
     setSidebar(false);
-    setQuery("");
-    setOwner("all");
-    setPriority("all");
-  }
-  async function save(input: OpportunityInput, id?: string) {
-    await api(id ? `/opportunities/${id}` : "/opportunities", {
-      method: id ? "PATCH" : "POST",
-      body: JSON.stringify(input),
-    });
-    await refresh();
-    setToast({
-      text: id
-        ? "Oportunidade atualizada."
-        : "Oportunidade adicionada ao pipeline.",
-    });
-  }
-  async function remove(id: string) {
-    await api(`/opportunities/${id}`, { method: "DELETE" });
-    await refresh();
-    setToast({ text: "Oportunidade excluída." });
   }
   async function downloadReport(reportId: string) {
     try {
@@ -357,54 +332,7 @@ export function Workspace() {
       setToast({ text: "Erro ao desconectar.", error: true });
     }
   }
-  async function move(id: string, stage: Stage) {
-    if (mutationLock.current) return;
-    mutationLock.current = true;
-    setBusy(true);
-    const previous = data;
-    setData((d) => ({
-      ...d,
-      opportunities: d.opportunities.map((o) =>
-        o.id === id ? { ...o, stage } : o,
-      ),
-    }));
-    try {
-      await api(`/opportunities/${id}/stage`, {
-        method: "PATCH",
-        body: JSON.stringify({ stage }),
-      });
-      await refresh();
-      setToast({
-        text: `Oportunidade movida para ${stages.find((s) => s.id === stage)?.label.toLowerCase()}.`,
-      });
-    } catch (e) {
-      setData(previous);
-      setToast({
-        text: e instanceof Error ? e.message : "Não foi possível mover.",
-        error: true,
-      });
-    } finally {
-      mutationLock.current = false;
-      setBusy(false);
-    }
-  }
-  const opportunities = data.opportunities;
-  const filtered = opportunities.filter(
-    (o) =>
-      `${o.company} ${o.contact} ${o.email}`
-        .toLocaleLowerCase("pt-BR")
-        .includes(query.toLocaleLowerCase("pt-BR")) &&
-      (owner === "all" || o.owner === owner) &&
-      (priority === "all" || o.priority === priority),
-  );
-  const open = opportunities.filter((o) => o.stage !== "won");
-  const won = opportunities.filter((o) => o.stage === "won");
-  const total = open.reduce((sum, o) => sum + o.value, 0);
-  const wonValue = won.reduce((sum, o) => sum + o.value, 0);
-  const rate = opportunities.length
-    ? Math.round((won.length / opportunities.length) * 100)
-    : 0;
-  const disabled = loading || !!loadError;
+  const current = navigation.find((n) => n.id === view) ?? navigation[0];
 
   return (
     <div className="app-shell">
@@ -449,10 +377,7 @@ export function Workspace() {
             >
               <Icon size={18} />
               <span>{label}</span>
-              {id === "pipeline" && (
-                <span className="nav-count">{opportunities.length}</span>
-              )}
-              {view === id && id !== "pipeline" && <ChevronRight size={13} />}
+              {view === id && <ChevronRight size={13} />}
             </button>
           ))}
         </nav>
@@ -475,7 +400,7 @@ export function Workspace() {
                 {currentUser?.name || "Equipe Mega"}
               </strong>
               <small style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "block" }}>
-                {currentUser?.email || "Workspace comercial"}
+                {currentUser?.email || "Mega Contabilidade"}
               </small>
             </div>
             <div className="profile-actions">
@@ -505,7 +430,7 @@ export function Workspace() {
             </button>
             <span>Workspace</span>
             <ChevronRight size={13} />
-            <strong>{navigation.find((n) => n.id === view)?.label}</strong>
+            <strong>{current.label}</strong>
           </div>
           <div className="topbar-right">
             <button
@@ -578,86 +503,46 @@ export function Workspace() {
             <div>
               <div className="section-kicker">
                 <span />
-                SEU ESPAÇO DE CRESCIMENTO
+                GESTTA · GOOGLE DRIVE
               </div>
               <h1>
-                {view === "pipeline"
-                  ? "Pipeline de vendas"
-                  : view === "overview"
-                    ? "Visão geral"
-                    : view === "reports"
-                      ? "Central de relatórios"
-                      : view === "history"
-                        ? "Histórico Gestta & Google Drive"
-                        : view === "integrations"
-                          ? "Integrações & Conexões"
-                          : "Seus contatos"}
+                {current.title}
                 <span className="title-dot">.</span>
               </h1>
-              <p>
-                {view === "pipeline"
-                  ? "Cada conversa, uma oportunidade. Acompanhe o próximo passo."
-                  : view === "overview"
-                    ? "Uma visão clara do que está acontecendo no seu comercial."
-                    : view === "reports"
-                      ? "Veja o que chegou, o que mudou e o que precisa da sua atenção."
-                      : view === "history"
-                        ? "Consulte relatórios e tarefas resgatados automaticamente do Gestta e salvos no Google Drive."
-                        : view === "integrations"
-                          ? "Sincronize arquivos e importe relatórios do Google Drive com renovação automática de tokens."
-                          : "Pessoas e empresas que fazem parte do seu pipeline."}
-              </p>
+              <p>{current.description}</p>
             </div>
             <div className="heading-actions">
-              {(view === "reports" || view === "integrations" || view === "history") && (
-                googleStatus?.connected ? (
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => navigate("integrations")}
-                    style={{
-                      borderColor: "rgba(91, 206, 176, 0.4)",
-                      background: "rgba(91, 206, 176, 0.08)",
-                      color: "#5bceb0",
-                    }}
-                  >
-                    <Check size={16} />
-                    Drive Conectado
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => {
-                      window.location.href = "/api/integrations/google/connect";
-                    }}
-                    style={{
-                      borderColor: "rgba(171, 137, 250, 0.4)",
-                      background: "rgba(171, 137, 250, 0.12)",
-                      color: "#e5def5",
-                    }}
-                  >
-                    <FolderOpen size={16} />
-                    Conectar Google Drive
-                  </button>
-                )
+              {googleStatus?.connected ? (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => navigate("integrations")}
+                  style={{
+                    borderColor: "rgba(91, 206, 176, 0.4)",
+                    background: "rgba(91, 206, 176, 0.08)",
+                    color: "#5bceb0",
+                  }}
+                >
+                  <Check size={16} />
+                  Drive Conectado
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    window.location.href = "/api/integrations/google/connect";
+                  }}
+                  style={{
+                    borderColor: "rgba(171, 137, 250, 0.4)",
+                    background: "rgba(171, 137, 250, 0.12)",
+                    color: "#e5def5",
+                  }}
+                >
+                  <FolderOpen size={16} />
+                  Conectar Google Drive
+                </button>
               )}
-              <button
-                className="secondary-button"
-                disabled={disabled}
-                onClick={() => setImportOpen(true)}
-              >
-                <ArrowDownToLine size={16} />
-                Importar relatório
-              </button>
-              <button
-                className="primary-button"
-                disabled={disabled}
-                onClick={() => setEditor({ stage: "new" })}
-              >
-                <Plus size={17} />
-                Nova oportunidade
-              </button>
             </div>
           </div>
           <div className="demo-strip">
@@ -690,310 +575,31 @@ export function Workspace() {
             <div className="load-state" role="status">
               <LoaderCircle className="spin" size={25} />
               <h2>Preparando seu workspace</h2>
-              <p>Carregando oportunidades e relatórios…</p>
+              <p>Carregando relatórios e tarefas…</p>
             </div>
           ) : (
             <>
-              {(view === "pipeline" || view === "overview") && (
-                <section className="stats-grid" aria-label="Resumo comercial">
-                  <Metric
-                    title="Pipeline em aberto"
-                    value={money(total)}
-                    foot={`${open.length} oportunidades em andamento`}
-                    icon={<Wallet size={18} />}
-                    accent="purple"
-                    graph
-                  />
-                  <Metric
-                    title="Oportunidades"
-                    value={String(opportunities.length).padStart(2, "0")}
-                    foot={`${opportunities.filter((o) => o.stage === "new").length} aguardando o primeiro contato`}
-                    icon={<Target size={18} />}
-                    accent="blue"
-                  />
-                  <Metric
-                    title="Negócios fechados"
-                    value={money(wonValue)}
-                    foot={`${won.length} relacionamentos que viraram negócio`}
-                    icon={<Check size={18} />}
-                    accent="green"
-                  />
-                  <Metric
-                    title="Taxa de fechamento"
-                    value={`${rate}%`}
-                    foot="Fechados sobre o total de oportunidades"
-                    icon={<TrendingUp size={18} />}
-                    accent="amber"
-                    progress={rate}
-                  />
+              {view === "dashboard" && (
+                <section className="dashboard-section" style={{ width: "100%" }}>
+                  <DashboardView />
                 </section>
-              )}
-              {view === "pipeline" && (
-                <section className="pipeline-section">
-                  <div className="pipeline-tabs">
-                    <div className="pipeline-tab active">
-                      <span className="stage-dot" />
-                      Funil comercial<span>{opportunities.length}</span>
-                    </div>
-                    <div className="pipeline-meta">
-                      <span className="tiny-dot" />
-                      Atualizado nesta sessão
-                    </div>
-                  </div>
-                  <div className="board-toolbar">
-                    <div className="board-tools-left">
-                      <div className="segmented" aria-label="Visualização">
-                        <button
-                          className={mode === "board" ? "selected" : ""}
-                          aria-label="Visualização em Kanban"
-                          aria-pressed={mode === "board"}
-                          onClick={() => setMode("board")}
-                        >
-                          <LayoutGrid size={15} />
-                          <span>Kanban</span>
-                        </button>
-                        <button
-                          className={mode === "list" ? "selected" : ""}
-                          aria-label="Visualização em lista"
-                          aria-pressed={mode === "list"}
-                          onClick={() => setMode("list")}
-                        >
-                          <List size={16} />
-                        </button>
-                      </div>
-                      <span className="toolbar-divider" />
-                      <div className="search-field">
-                        <Search size={16} />
-                        <input
-                          ref={searchRef}
-                          placeholder="Buscar oportunidade…"
-                          aria-label="Buscar oportunidade"
-                          value={query}
-                          onChange={(e) => setQuery(e.target.value)}
-                        />
-                        <kbd>Ctrl K</kbd>
-                      </div>
-                    </div>
-                    <div className="board-tools-right">
-                      <div
-                        className="team-stack"
-                        aria-label="Três responsáveis"
-                      >
-                        {owners.map((o, i) => (
-                          <span
-                            key={o}
-                            title={o}
-                            className={`avatar avatar-${i}`}
-                          >
-                            {initials(o)}
-                          </span>
-                        ))}
-                        <span className="stack-total">3</span>
-                      </div>
-                      <button
-                        className={`filter-button ${showFilters ? "selected" : ""}`}
-                        onClick={() => setShowFilters(!showFilters)}
-                        aria-expanded={showFilters}
-                      >
-                        <SlidersHorizontal size={15} />
-                        Filtros
-                        {(owner !== "all" || priority !== "all") && (
-                          <span className="filter-dot" />
-                        )}
-                        <ChevronDown size={13} />
-                      </button>
-                    </div>
-                  </div>
-                  {showFilters && (
-                    <div className="filter-panel">
-                      <label>
-                        Responsável
-                        <select
-                          value={owner}
-                          onChange={(e) => setOwner(e.target.value)}
-                        >
-                          <option value="all">Todos os responsáveis</option>
-                          {owners.map((o) => (
-                            <option key={o}>{o}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        Prioridade
-                        <select
-                          value={priority}
-                          onChange={(e) => setPriority(e.target.value)}
-                        >
-                          <option value="all">Todas as prioridades</option>
-                          <option value="high">Alta</option>
-                          <option value="medium">Média</option>
-                          <option value="low">Baixa</option>
-                        </select>
-                      </label>
-                      <button
-                        className="text-button"
-                        onClick={() => {
-                          setOwner("all");
-                          setPriority("all");
-                          setQuery("");
-                        }}
-                      >
-                        Limpar filtros
-                      </button>
-                      <span>{filtered.length} oportunidades encontradas</span>
-                    </div>
-                  )}
-                  {mode === "board" ? (
-                    <Kanban
-                      items={filtered}
-                      onOpen={(item) => setEditor({ item, stage: item.stage })}
-                      onAdd={(stage) => setEditor({ stage })}
-                      onMove={(id, stage) => void move(id, stage)}
-                      busy={busy}
-                    />
-                  ) : (
-                    <OpportunityTable
-                      items={filtered}
-                      onOpen={(item) => setEditor({ item, stage: item.stage })}
-                    />
-                  )}
-                  <div className="board-caption">
-                    <span>
-                      <GripIcon />
-                      Arraste os cartões para mudar de etapa ou abra uma
-                      oportunidade para editar.
-                    </span>
-                    <span>{filtered.length} oportunidades · 5 etapas</span>
-                  </div>
-                </section>
-              )}
-              {view === "overview" && (
-                <div className="overview-grid">
-                  <section className="surface funnel-panel">
-                    <div className="surface-heading">
-                      <div>
-                        <span className="eyebrow">DO CONTATO À CONQUISTA</span>
-                        <h2>Seu funil, em números</h2>
-                      </div>
-                      <BarChart3 size={20} />
-                    </div>
-                    <div className="funnel-chart">
-                      {stages.map((stage) => {
-                        const items = opportunities.filter(
-                          (o) => o.stage === stage.id,
-                        );
-                        const max = Math.max(
-                          ...stages.map(
-                            (s) =>
-                              opportunities.filter((o) => o.stage === s.id)
-                                .length,
-                          ),
-                          1,
-                        );
-                        return (
-                          <button
-                            key={stage.id}
-                            onClick={() => navigate("pipeline")}
-                          >
-                            <div>
-                              <span>{stage.label}</span>
-                              <strong>{items.length}</strong>
-                            </div>
-                            <div className="bar-track">
-                              <span
-                                style={{
-                                  width: `${(items.length / max) * 100}%`,
-                                  background: stage.color,
-                                }}
-                              />
-                            </div>
-                            <small>
-                              {money(
-                                items.reduce((sum, o) => sum + o.value, 0),
-                              )}
-                            </small>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </section>
-                  <section className="surface">
-                    <div className="surface-heading">
-                      <div>
-                        <span className="eyebrow">PRÓXIMOS PASSOS</span>
-                        <h2>Conversas para retomar</h2>
-                      </div>
-                      <span className="count-pill">
-                        {open.filter((o) => o.dueDate <= localDate()).length}
-                      </span>
-                    </div>
-                    {open.filter((o) => o.dueDate <= localDate()).length ===
-                    0 ? (
-                      <Empty
-                        title="Tudo em dia"
-                        text="Nenhum contato pendente para hoje."
-                      />
-                    ) : (
-                      open
-                        .filter((o) => o.dueDate <= localDate())
-                        .map((o) => (
-                          <button
-                            key={o.id}
-                            className="follow-up"
-                            onClick={() =>
-                              setEditor({ item: o, stage: o.stage })
-                            }
-                          >
-                            <span
-                              className={`company-logo logo-${o.company.length % 5}`}
-                            >
-                              {initials(o.company)}
-                            </span>
-                            <div>
-                              <strong>{o.company}</strong>
-                              <small>
-                                {o.contact} · {money(o.value)}
-                              </small>
-                            </div>
-                            <span
-                              className={
-                                o.dueDate < localDate() ? "overdue" : ""
-                              }
-                            >
-                              {o.dueDate === localDate()
-                                ? "Hoje"
-                                : dateLabel(o.dueDate)}
-                            </span>
-                            <ChevronRight size={16} />
-                          </button>
-                        ))
-                    )}
-                  </section>
-                  <section className="surface recent-surface">
-                    <div className="surface-heading">
-                      <div>
-                        <span className="eyebrow">NO SEU WORKSPACE</span>
-                        <h2>Atividade recente</h2>
-                      </div>
-                      <span className="session-tag">Nesta sessão</span>
-                    </div>
-                    <Activities items={data.activities.slice(0, 6)} />
-                  </section>
-                </div>
               )}
               {view === "reports" && (
                 <section className="reports-section">
                   <ReportCenter
                     reports={data.reports}
-                    opportunities={data.opportunities}
-                    onImport={() => setImportOpen(true)}
+                    tasks={data.tasks}
+                    onSync={() =>
+                      gesttaStatus?.connected
+                        ? setGesttaSyncOpen(true)
+                        : navigate("integrations")
+                    }
                     onDownload={downloadReport}
                     onRefresh={refresh}
                     onUpdated={(report) => setData(current => ({
                       ...current,
                       reports: current.reports.map(r => r.id === report.id ? report : r),
                     }))}
-                    onOpenRecord={(item) => setEditor({ item, stage: item.stage })}
                   />
                   <div
                     className="surface"
@@ -1081,7 +687,7 @@ export function Workspace() {
                           >
                             {googleStatus?.connected
                               ? `Conta conectada: ${googleStatus.email || "Google Drive"} · Renovação automática ativa`
-                              : "Conecte sua conta do Google Drive para sincronizar e importar relatórios e planilhas diretamente."}
+                              : "Conecte sua conta do Google Drive para enviar os relatórios e documentos do Gestta diretamente."}
                           </p>
                         </div>
                       </div>
@@ -1337,21 +943,6 @@ export function Workspace() {
                             <button
                               type="button"
                               className="primary-button"
-                              onClick={() => setGesttaImportOpen(true)}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "8px",
-                                padding: "10px 18px",
-                                fontSize: "14px",
-                              }}
-                            >
-                              <Building2 size={16} />
-                              Importar Clientes ({gesttaStatus.totalCustomers || 514})
-                            </button>
-                            <button
-                              type="button"
-                              className="primary-button"
                               onClick={() => setGesttaSyncOpen(true)}
                               style={{
                                 display: "flex",
@@ -1569,7 +1160,7 @@ export function Workspace() {
                         >
                           {googleStatus?.connected
                             ? `Conta vinculada: ${googleStatus.email || "Google Drive"} · Tokens salvos e renovados automaticamente no Supabase.`
-                            : "Conecte sua conta do Google Drive via OAuth 2.0 Web para sincronizar relatórios e planilhas diretamente."}
+                            : "Conecte sua conta do Google Drive via OAuth 2.0 Web para enviar os relatórios e documentos do Gestta diretamente."}
                         </p>
                       </div>
                     </div>
@@ -1779,7 +1370,7 @@ export function Workspace() {
                           Faça login e autorize a permissão de leitura de arquivos e planilhas no Google.
                         </li>
                         <li>
-                          O Google retorna para o CRM e seus tokens de acesso são salvos de forma segura no Supabase.
+                          O Google retorna para o sistema e seus tokens de acesso são salvos de forma segura no Supabase.
                         </li>
                         <li>
                           A renovação do token ocorre automaticamente em segundo plano, sem necessidade de novo login.
@@ -1788,6 +1379,10 @@ export function Workspace() {
                     </div>
                   )}
                   </section>
+
+                  <ApiTokensPanel
+                    onMessage={(text, error) => setToast({ text, error })}
+                  />
                 </div>
               )}
               {view === "history" && (
@@ -1795,144 +1390,25 @@ export function Workspace() {
                   <HistoryView />
                 </section>
               )}
-              {view === "contacts" && (
-                <section className="surface contacts-surface">
-                  <div className="surface-heading">
-                    <div>
-                      <h2>
-                        Contatos do pipeline{" "}
-                        <span className="count-pill">{filtered.length}</span>
-                      </h2>
-                      <p>Informações de contato vinculadas às oportunidades.</p>
-                    </div>
-                    <div className="search-field">
-                      <Search size={16} />
-                      <input
-                        ref={searchRef}
-                        placeholder="Buscar nome ou empresa…"
-                        aria-label="Buscar contato"
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <div className="table-scroll">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Contato</th>
-                          <th>Empresa</th>
-                          <th>E-mail</th>
-                          <th>Responsável</th>
-                          <th>Etapa</th>
-                          <th>
-                            <span className="sr-only">Ações</span>
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filtered.map((o) => (
-                          <tr key={o.id}>
-                            <td>
-                              <span className="table-contact">
-                                <span className="avatar avatar-1">
-                                  {initials(o.contact)}
-                                </span>
-                                <strong>{o.contact}</strong>
-                              </span>
-                            </td>
-                            <td>{o.company}</td>
-                            <td>
-                              {o.email ? (
-                                <a href={`mailto:${o.email}`}>{o.email}</a>
-                              ) : (
-                                <span className="muted">Não informado</span>
-                              )}
-                            </td>
-                            <td>{o.owner}</td>
-                            <td>
-                              <span
-                                className="stage-label"
-                                style={{
-                                  color: stages.find((s) => s.id === o.stage)
-                                    ?.color,
-                                }}
-                              >
-                                {stages.find((s) => s.id === o.stage)?.label}
-                              </span>
-                            </td>
-                            <td>
-                              <button
-                                className="icon-button"
-                                aria-label={`Editar contato ${o.contact}`}
-                                onClick={() =>
-                                  setEditor({ item: o, stage: o.stage })
-                                }
-                              >
-                                <ArrowUpRight size={17} />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {filtered.length === 0 && (
-                      <Empty
-                        title="Nenhum contato encontrado"
-                        text="Tente outra busca ou crie uma oportunidade."
-                      />
-                    )}
-                  </div>
-                </section>
-              )}
             </>
           )}
           <footer className="workspace-footer">
             <span>
-              MEGA CRM <i /> Conexões que movem negócios.
+              MEGA CRM <i /> Relatórios do Gestta organizados no Google Drive.
             </span>
             <span>
-              Feito para o seu próximo passo <ArrowUpRight size={12} />
+              Mega Contabilidade <ArrowUpRight size={12} />
             </span>
           </footer>
         </main>
       </div>
-      {editor && (
-        <OpportunityDialog
-          opportunity={editor.item}
-          stage={editor.stage}
-          onClose={() => setEditor(null)}
-          onSave={save}
-          onDelete={remove}
-        />
-      )}
-      {importOpen && (
-        <ImportDialog
-          onClose={() => setImportOpen(false)}
-          onImported={async () => {
-            await refresh();
-            setView("pipeline");
-            setToast({ text: "Relatório importado com sucesso." });
-          }}
-        />
-      )}
-      <GesttaImportDialog
-        open={gesttaImportOpen}
-        onClose={() => setGesttaImportOpen(false)}
-        onSuccess={(count) => {
-          void refresh();
-          setToast({
-            text: `${count} cliente(s) do Gestta importado(s) para o pipeline!`,
-          });
-        }}
-      />
       <GesttaSyncDialog
         open={gesttaSyncOpen}
         onClose={() => setGesttaSyncOpen(false)}
         onSuccess={() => {
           void refresh();
           setToast({
-            text: "Tarefas do Gestta sincronizadas com o CRM e Google Drive com sucesso!",
+            text: "Tarefas do Gestta sincronizadas e enviadas ao Google Drive com sucesso!",
           });
         }}
       />
@@ -1962,17 +1438,25 @@ export function Workspace() {
             <X size={17} />
           </button>
           <span className="eyebrow">COMECE POR AQUI</span>
-          <h3>Seu CRM, passo a passo</h3>
+          <h3>Gestta → Google Drive, passo a passo</h3>
           <ol>
-            <li>Crie uma oportunidade ou importe um CSV pelo modelo.</li>
-            <li>Arraste pelo ícone no canto do cartão para mudar de etapa.</li>
             <li>
-              Para usar o teclado ou celular, abra o cartão e selecione a etapa.
+              Em <strong>Integrações</strong>, conecte o Gestta e o Google
+              Drive.
+            </li>
+            <li>
+              Use <strong>Sincronizar no Google Drive</strong> para buscar as
+              tarefas e documentos do Gestta e enviá-los ao Drive.
+            </li>
+            <li>
+              Acompanhe cada sincronização em <strong>Relatórios</strong>{" "}
+              (tarefas, documentos pendentes e dúvidas) e consulte tudo por
+              empresa em <strong>Histórico</strong>.
             </li>
           </ol>
           <p>
-            Os dados são persistidos no Supabase (Postgres & Storage). Conecte
-            sua conta do Google Drive no menu lateral para sincronizar planilhas e relatórios.
+            Os dados ficam no Supabase (Postgres & Storage) e os arquivos no
+            Google Drive, organizados por Empresa / Competência / Tarefa.
           </p>
         </div>
       )}
@@ -1980,61 +1464,6 @@ export function Workspace() {
   );
 }
 
-function Metric({
-  title,
-  value,
-  foot,
-  icon,
-  accent,
-  graph,
-  progress,
-}: {
-  title: string;
-  value: string;
-  foot: string;
-  icon: React.ReactNode;
-  accent: string;
-  graph?: boolean;
-  progress?: number;
-}) {
-  return (
-    <article className={`metric metric-${accent}`}>
-      <div className="metric-top">
-        <span>{title}</span>
-        <span className="metric-icon">{icon}</span>
-      </div>
-      <div className="metric-number">
-        {value}
-        {graph && (
-          <svg viewBox="0 0 96 34" aria-hidden="true">
-            <defs>
-              <linearGradient id="spark-fill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stopColor="#a78bfa" stopOpacity=".22" />
-                <stop offset="1" stopColor="#a78bfa" stopOpacity="0" />
-              </linearGradient>
-            </defs>
-            <path
-              d="M0 27 L13 23 L25 26 L36 17 L48 19 L60 9 L71 13 L83 5 L95 2 L95 34 L0 34 Z"
-              fill="url(#spark-fill)"
-            />
-            <path
-              d="M0 27 L13 23 L25 26 L36 17 L48 19 L60 9 L71 13 L83 5 L95 2"
-              stroke="#b098f8"
-              strokeWidth="2"
-              fill="none"
-            />
-          </svg>
-        )}
-      </div>
-      {progress !== undefined && (
-        <div className="metric-progress">
-          <span style={{ width: `${progress}%` }} />
-        </div>
-      )}
-      <p>{foot}</p>
-    </article>
-  );
-}
 function Empty({ title, text }: { title: string; text: string }) {
   return (
     <div className="empty-state">
@@ -2067,71 +1496,8 @@ function Activities({ items }: { items: Activity[] }) {
     </div>
   ) : (
     <Empty
-      title="Pronto para o primeiro movimento"
-      text="Crie, edite ou mova uma oportunidade para acompanhar a atividade aqui."
+      title="Nenhuma atividade ainda"
+      text="As sincronizações do Gestta com o Google Drive aparecerão aqui."
     />
   );
-}
-function OpportunityTable({
-  items,
-  onOpen,
-}: {
-  items: Opportunity[];
-  onOpen: (o: Opportunity) => void;
-}) {
-  return (
-    <div className="table-scroll opportunity-table">
-      <table>
-        <thead>
-          <tr>
-            <th>Oportunidade</th>
-            <th>Valor</th>
-            <th>Etapa</th>
-            <th>Responsável</th>
-            <th>Próximo contato</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((o) => (
-            <tr key={o.id}>
-              <td>
-                <strong>{o.company}</strong>
-                <small>{o.contact}</small>
-              </td>
-              <td>{money(o.value)}</td>
-              <td>
-                <span
-                  className="stage-label"
-                  style={{ color: stages.find((s) => s.id === o.stage)?.color }}
-                >
-                  {stages.find((s) => s.id === o.stage)?.label}
-                </span>
-              </td>
-              <td>{o.owner}</td>
-              <td>{dateLabel(o.dueDate)}</td>
-              <td>
-                <button
-                  className="icon-button"
-                  aria-label={`Abrir ${o.company}`}
-                  onClick={() => onOpen(o)}
-                >
-                  <ArrowUpRight size={17} />
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {items.length === 0 && (
-        <Empty
-          title="Nenhuma oportunidade encontrada"
-          text="Ajuste os filtros ou adicione uma nova oportunidade."
-        />
-      )}
-    </div>
-  );
-}
-function GripIcon() {
-  return <MoreHorizontal size={15} />;
 }

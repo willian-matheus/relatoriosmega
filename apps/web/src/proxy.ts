@@ -9,6 +9,8 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/login") ||
     pathname.startsWith("/api/auth/") ||
     pathname.startsWith("/api/cron/") ||
+    // API para plataformas externas: autenticada por token de API na própria rota
+    pathname.startsWith("/api/public/") ||
     pathname.startsWith("/api/integrations/google/callback") ||
     pathname.startsWith("/api/google/callback") ||
     pathname === "/favicon.svg" ||

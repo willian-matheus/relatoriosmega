@@ -11,8 +11,8 @@
     "dev": "concurrently -k -n WEB,API -c magenta,cyan \"npm run dev -w @mega/web\" \"npm run dev -w @mega/api\"",
     "build": "npm run build -w @mega/contracts && npm run build -w @mega/api && npm run build -w @mega/web",
     "typecheck": "npm run build -w @mega/contracts && npm run typecheck --workspaces --if-present",
-    "test": "npm run build -w @mega/contracts && npm run test -w @mega/api",
-    "format": "prettier --write apps packages samples README.md package.json",
+    "test": "npm run build -w @mega/contracts && npm run test -w @mega/api && npm run test -w @mega/web",
+    "format": "prettier --write apps packages README.md package.json",
     "start": "concurrently -k -n WEB,API -c magenta,cyan \"npm run start -w @mega/web\" \"npm run start -w @mega/api\""
   },
   "dependencies": {

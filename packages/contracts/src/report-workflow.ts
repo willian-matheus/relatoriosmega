@@ -1,5 +1,22 @@
 import { z } from "zod";
-import type { Opportunity, Report } from "./index";
+import type { Report } from "./index";
+
+/**
+ * Registro vinculado a um relatório (no web: tarefa do Gestta; na API legada:
+ * oportunidade). `Opportunity` satisfaz este formato.
+ */
+export type ReportRecordRef = {
+  id: string;
+  company: string;
+  contact?: string;
+  /** Rótulo salvo nas dúvidas; se ausente usa "empresa · contato". */
+  label?: string;
+};
+export type ReportTrackedRecord = {
+  reportId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 
 const authorSchema = z.object({
   name: z.string().min(1).max(120),
@@ -110,7 +127,7 @@ export function applyReportAction(
   current: ReportWorkflow,
   action: ReportAction,
   author: ReportAuthor,
-  records: Opportunity[],
+  records: ReportRecordRef[],
   now: string,
   newId: () => string,
 ): ReportWorkflow {
@@ -148,7 +165,12 @@ export function applyReportAction(
         text: action.text,
         context: action.context,
         opportunityId: record?.id ?? null,
-        recordLabel: record ? `${record.company} · ${record.contact}` : null,
+        recordLabel: record
+          ? (record.label ??
+            (record.contact
+              ? `${record.company} · ${record.contact}`
+              : record.company))
+          : null,
         status: "open",
         author,
         createdAt: now,
@@ -193,16 +215,22 @@ export function applyReportAction(
   return next;
 }
 
-export function recordChange(record: Opportunity, reviewedAt: string | null) {
+export function recordChange(
+  record: Pick<ReportTrackedRecord, "createdAt" | "updatedAt">,
+  reviewedAt: string | null,
+) {
   if (!reviewedAt || Date.parse(record.createdAt) > Date.parse(reviewedAt))
     return "new";
   if (Date.parse(record.updatedAt) > Date.parse(reviewedAt)) return "changed";
   return null;
 }
 
-export function reportSummary(report: Report, opportunities: Opportunity[]) {
+export function reportSummary<T extends ReportTrackedRecord>(
+  report: Report,
+  allRecords: T[],
+) {
   const workflow = report.workflow ?? readReportWorkflow(null);
-  const records = opportunities.filter((o) => o.reportId === report.id);
+  const records = allRecords.filter((o) => o.reportId === report.id);
   const lastUpdated = [
     report.updatedAt ?? report.createdAt,
     ...records.map((o) => o.updatedAt),

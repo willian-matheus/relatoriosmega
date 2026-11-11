@@ -14,10 +14,7 @@ import {
 } from "@mega/contracts";
 import { CrmService } from "../src/crm.service";
 import {
-  commitImport,
   getWorkspaceSnapshot,
-  previewImport,
-  saveOpportunity,
   updateReport,
 } from "../../web/src/lib/crm-backend";
 
@@ -29,22 +26,17 @@ const input = {
   dueDate: "2026-09-20",
 };
 
-for (const backend of ["NestJS", "Next.js"] as const) {
+// O web (Next.js) não tem mais oportunidades/importação CSV: o fluxo completo
+// com registros é exercitado só na API NestJS. O web é verificado abaixo.
+for (const backend of ["NestJS"] as const) {
   test(`${backend}: importação, documentos, conversa contextual, resolução e concorrência`, async () => {
     delete process.env.SUPABASE_URL;
     const service = new CrmService();
-    const preview =
-      backend === "NestJS" ? service.preview.bind(service) : previewImport;
-    const commit =
-      backend === "NestJS" ? service.commit.bind(service) : commitImport;
-    const snapshot =
-      backend === "NestJS"
-        ? service.snapshot.bind(service)
-        : getWorkspaceSnapshot;
-    const update =
-      backend === "NestJS" ? service.updateReport.bind(service) : updateReport;
-    const save =
-      backend === "NestJS" ? service.save.bind(service) : saveOpportunity;
+    const preview = service.preview.bind(service);
+    const commit = service.commit.bind(service);
+    const snapshot = service.snapshot.bind(service);
+    const update = service.updateReport.bind(service);
+    const save = service.save.bind(service);
     let report = structuredClone(
       await commit(preview({ name: "teste.csv", rows: [input] }).token),
     );
@@ -185,6 +177,58 @@ for (const backend of ["NestJS", "Next.js"] as const) {
     );
   });
 }
+
+test("Next.js: sem Supabase devolve listas vazias e recusa relatório inexistente", async () => {
+  delete process.env.SUPABASE_URL;
+  assert.deepEqual(await getWorkspaceSnapshot(), {
+    reports: [],
+    activities: [],
+    tasks: [],
+  });
+  await assert.rejects(
+    updateReport(
+      randomUUID(),
+      {
+        version: "2026-09-01T10:00:00Z",
+        action: { type: "document.add", name: "Contrato" },
+      },
+      author,
+    ),
+    (e: unknown) => e instanceof ReportUpdateError && e.status === 404,
+  );
+  await assert.rejects(
+    updateReport(randomUUID(), { action: { type: "inválido" } }, author),
+    (e: unknown) => e instanceof ReportUpdateError && e.status === 400,
+  );
+});
+
+test("dúvida ligada a uma tarefa usa o rótulo da tarefa", () => {
+  const task = {
+    id: randomUUID(),
+    company: "Empresa Gestta",
+    label: "Empresa Gestta · DCTFWeb · 10/2026",
+  };
+  const workflow = applyReportAction(
+    readReportWorkflow(null),
+    { type: "question.add", text: "Falta a guia?", context: "", opportunityId: task.id },
+    author,
+    [task],
+    "2026-11-10T10:00:00Z",
+    randomUUID,
+  );
+  assert.equal(workflow.questions[0].opportunityId, task.id);
+  assert.equal(workflow.questions[0].recordLabel, task.label);
+  assert.throws(() =>
+    applyReportAction(
+      workflow,
+      { type: "question.add", text: "Outra", context: "", opportunityId: randomUUID() },
+      author,
+      [task],
+      "2026-11-10T10:00:00Z",
+      randomUUID,
+    ),
+  );
+});
 
 test("destaques usam a revisão e a atualização real dos registros", () => {
   const createdAt = "2026-09-01T10:00:00Z";
